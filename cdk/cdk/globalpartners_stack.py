@@ -3,9 +3,11 @@ import tempfile
 from dotenv import load_dotenv
 from aws_cdk import (
     Stack,
+    Duration,
     aws_iam as iam,
     aws_s3 as s3,
     aws_s3_deployment as s3deploy,
+    aws_logs as logs,
 )
 from constructs import Construct
 
@@ -107,3 +109,51 @@ class GlobalPartnersStack(Stack):
             sources=[s3deploy.Source.asset(tmp_dir)],
             destination_bucket=bucket,
         )
+
+        # ── Resource 3: CloudWatch Log Groups ──────────────────────
+        # One log group per Glue job.
+        # Retention period is configurable via LOG_RETENTION_DAYS in .env
+        # Log groups are pre-created so logs appear immediately on first
+        # job run without waiting for auto-creation.
+
+        log_retention_days = int(os.getenv("LOG_RETENTION_DAYS", "30"))
+        
+        # This maps the integer from .env (LOG_RETENTION_DAYS=30) to logs.RetentionDays.ONE_MONTH 
+        retention_map = {
+            1:   logs.RetentionDays.ONE_DAY,
+            3:   logs.RetentionDays.THREE_DAYS,
+            7:   logs.RetentionDays.ONE_WEEK,
+            14:  logs.RetentionDays.TWO_WEEKS,
+            30:  logs.RetentionDays.ONE_MONTH,
+            60:  logs.RetentionDays.TWO_MONTHS,
+            90:  logs.RetentionDays.THREE_MONTHS,
+            180: logs.RetentionDays.SIX_MONTHS,
+            365: logs.RetentionDays.ONE_YEAR,
+        }
+        retention = retention_map.get(log_retention_days, logs.RetentionDays.ONE_MONTH)
+
+        ingestion_job_name      = os.getenv("INGESTION_JOB_NAME")
+        bronze_to_silver_name   = os.getenv("BRONZE_TO_SILVER_JOB_NAME")
+        silver_to_gold_name     = os.getenv("SILVER_TO_GOLD_JOB_NAME")
+
+        logs.LogGroup(
+            self,
+            "IngestionJobLogGroup",
+            log_group_name=f"/aws-glue/jobs/{ingestion_job_name}",
+            retention=retention,
+        )
+
+        logs.LogGroup(
+            self,
+            "BronzeToSilverJobLogGroup",
+            log_group_name=f"/aws-glue/jobs/{bronze_to_silver_name}",
+            retention=retention,
+        )
+
+        logs.LogGroup(
+            self,
+            "SilverToGoldJobLogGroup",
+            log_group_name=f"/aws-glue/jobs/{silver_to_gold_name}",
+            retention=retention,
+        )
+
