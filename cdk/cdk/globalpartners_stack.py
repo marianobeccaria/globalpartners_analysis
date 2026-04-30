@@ -4,6 +4,8 @@ from dotenv import load_dotenv
 from aws_cdk import (
     Stack,
     aws_iam as iam,
+    aws_s3 as s3,
+    aws_s3_deployment as s3deploy,
 )
 from constructs import Construct
 
@@ -65,4 +67,43 @@ class GlobalPartnersStack(Stack):
                 ],
                 resources=["arn:aws:logs:*:*:/aws-glue/*"],
             )
+        )
+
+# ── Resource 2: S3 Folder Structure ────────────────────────
+        # Upload empty .keep files to establish Bronze / Silver / Gold prefixes in the bucket
+        # and make the structure navigable in the AWS console and
+
+        bucket = s3.Bucket.from_bucket_name(
+            self,
+            "GlobalPartnersBucket",
+            bucket_name,
+        )
+
+        # Build folder structure locally using a temp directory
+        tmp_dir = tempfile.mkdtemp()
+        folders = [
+            "bronze/order_items",
+            "bronze/order_item_options",
+            "bronze/date_dim",
+            "silver/orders_enriched",
+            "gold/customer_clv_daily",
+            "gold/customer_rfm_segments",
+            "gold/customer_churn_indicators",
+            "gold/sales_trends",
+            "gold/loyalty_comparison",
+            "gold/location_performance",
+            "gold/discount_effectiveness",
+        ]
+
+        for folder in folders:
+            full_path = os.path.join(tmp_dir, folder)
+            os.makedirs(full_path, exist_ok=True)
+            with open(os.path.join(full_path, ".keep"), "w") as f:
+                f.write("")
+
+        s3deploy.BucketDeployment(
+            self,
+            "GlobalPartnersFolderStructure",
+            sources=[s3deploy.Source.asset(tmp_dir)],
+            destination_bucket=bucket,
         )
