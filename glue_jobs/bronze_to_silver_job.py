@@ -81,9 +81,17 @@ print(f"{'='*60}")
 # ══════════════════════════════════════════════════════════════
 print("\n── STEP 1: Reading Bronze tables ──")
 
-df_items = spark.read.parquet(f"{BRONZE_BASE}/order_items/")
+# STEP 1 — READ BRONZE TABLES
+df_items   = spark.read.parquet(f"{BRONZE_BASE}/order_items/")
 df_options = spark.read.parquet(f"{BRONZE_BASE}/order_item_options/")
-df_date = spark.read.parquet(f"{BRONZE_BASE}/date_dim/")
+df_date    = spark.read.parquet(f"{BRONZE_BASE}/date_dim/")
+
+# Drop ingestion_date partition column that was added by the ingestion job
+# for Bronze partitioning only and is not needed in Silver or Gold.
+# Avoids duplicate column error when writing Silver.
+df_items   = df_items.drop("ingestion_date")
+df_options = df_options.drop("ingestion_date")
+df_date    = df_date.drop("ingestion_date")
 
 print(f"  order_items        : {df_items.count():,} rows")
 print(f"  order_item_options : {df_options.count():,} rows")

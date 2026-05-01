@@ -71,7 +71,7 @@ class GlobalPartnersStack(Stack):
             )
         )
 
-# ── Resource 2: S3 Folder Structure ────────────────────────
+        # ── Resource 2: S3 Folder Structure ────────────────────────
         # Upload empty .keep files to establish Bronze / Silver / Gold prefixes in the bucket
         # and make the structure navigable in the AWS console and
 
@@ -183,13 +183,14 @@ class GlobalPartnersStack(Stack):
                 script_location=f"{script_base}/ingestion_job.py",
             ),
             default_arguments={
-                "--job-language":           "python",
-                "--TempDir":                f"s3://{bucket_name}/tmp/",
+                "--job-language":                    "python",
+                "--TempDir":                         f"s3://{bucket_name}/tmp/",
                 "--enable-continuous-cloudwatch-log": "true",
-                "--enable-metrics":         "true",
-                "--S3_BUCKET":              bucket_name,
-                "--SOURCE_PREFIX":          "source",
-                "--BRONZE_PREFIX":          "bronze",
+                "--enable-metrics":                  "true",
+                "--additional-python-modules":       "pyarrow==11.0.0,pandas==2.0.0",
+                "--S3_BUCKET":                       bucket_name,
+                "--SOURCE_PREFIX":                   "source",
+                "--BRONZE_PREFIX":                   "bronze",
             },
             max_capacity=0.0625,   # 1/16 DPU — minimum for Python Shell
             max_retries=1,
