@@ -24,7 +24,7 @@
 
 GlobalPartners requires a unified data platform to analyze customer behavior, spending patterns, and overall business performance across all restaurant locations and ordering platforms.
 
-The **primary deliverable** is a daily-updated Customer Lifetime Value (CLV) model that tracks how each customer's value evolves over time. **Secondary deliverables** include RFM segmentation, churn indicators, sales trend monitoring, loyalty program analysis, location performance ranking, and discount effectiveness. Results will be displayed an interactive Streamlit dashboard.
+The **primary deliverable** is a daily-updated Customer Lifetime Value (CLV) model that tracks how each customer's value evolves over time. **Secondary deliverables** include RFM (Recency, Frequency, Monetary) segmentation, churn indicators, sales trend monitoring, loyalty program analysis, location performance ranking, and discount effectiveness. Results will be displayed an interactive Streamlit dashboard.
 
 The entire pipeline runs on AWS using PySpark for all transformation logic, following a Medallion Architecture (Bronze -> Silver -> Gold) orchestrated by AWS Glue Workflow with chained Triggers.
 
@@ -60,6 +60,8 @@ The entire pipeline runs on AWS using PySpark for all transformation logic, foll
 ---
 
 ## 3. Source Data
+
+All the information in this section was obtained by performing a preliminar data analysys and the sripts can be found here: [preliminary_data_analysis.py](../src/exploratory_data_analysis.py)
 
 ### 3.1 Tables
 
@@ -298,18 +300,18 @@ This the main deliverable. Tracks how each customer's cumulative lifetime value 
 |---|---|
 | **AWS Glue Python Shell** | Lightweight ingestion. No Spark cluster needed for simple JDBC reads. Cost-efficient for small jobs. |
 | **AWS Glue Spark** | PySpark required by client. Native AWS service. No new licenses. Scales automatically for 200K+ row transformations. |
-| **AWS Glue Workflow** | Native orchestration within Glue - avoids Step Functions license complexity. Trigger chaining provides built-in failure isolation. |
+| **AWS Glue Workflow** | Native orchestration within Glue. Avoids Step Functions. Trigger chaining provides built-in failure isolation. |
 | **Amazon S3 + Parquet** | Cost-effective, durable object storage. Parquet is columnar - fast for PySpark aggregations. Partition pruning reduces scan costs. |
-| **Medallion Architecture** | Industry-standard pattern. Bronze preserves raw source fidelity. Silver enforces data quality. Gold serves business metrics cleanly. |
-| **CloudWatch** | Native AWS monitoring — no external tooling. Alarms on job failure ensure pipeline issues are caught immediately. |
+| **Medallion Architecture** | Bronze preserves raw source fidelity. Silver enforces data quality. Gold serves business metrics cleanly. |
+| **CloudWatch** | Native AWS monitoring. Alarms on job failure ensure pipeline issues are caught immediately. |
 | **Streamlit** | Python-native dashboard framework. Reads Gold Parquet via `boto3`/`pandas`. No additional AWS service required for visualization. |
-| **IAM Least Privilege** | Each Glue job uses a scoped IAM role with only the S3 prefixes and Glue actions it needs — reduces blast radius of any credential issue. |
+| **IAM Least Privilege** | Each Glue job uses a scoped IAM role with only the S3 prefixes and Glue actions it needs. Reduces any credential issue. |
 
 ---
 
 ## 8. Open Questions for SME Approval
 
-The following items require SME clarification or sign-off before pipeline build begins (Step 4):
+The following items may require SME clarification:
 
 | # | Question | Context |
 |---|---|---|
