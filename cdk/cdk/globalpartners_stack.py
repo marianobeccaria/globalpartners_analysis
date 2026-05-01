@@ -264,3 +264,96 @@ class GlobalPartnersStack(Stack):
             description="GlobalPartners — Silver to Gold metric computation",
         )
         
+        
+        # ── Resource 5: Glue Workflow + Triggers ───────────────────
+        # The Workflow groups all three jobs under one single pipeline.
+        # Triggers chain them together so each job only starts when
+        # the previous one succeeds.
+
+        workflow_name = os.getenv("GLUE_WORKFLOW_NAME")
+
+        # ── Workflow ────────────────────────────────────────────────
+        workflow = glue.CfnWorkflow(
+            self,
+            "GlobalPartnersWorkflow",
+            name=workflow_name,
+            description="GlobalPartners daily pipeline — ingestion → bronze→silver → silver→gold",
+        )
+
+        # ── Trigger 1: Scheduled ────────────────────────────────────
+        # Starts ingestion_job on a daily schedule at 2:00 AM UTC.
+        # SCHEDULED type triggers fire independently. No predecessor.
+        # Cron format: cron(minutes hours day-of-month month day-of-week year)
+        pipeline_schedule = os.getenv("PIPELINE_SCHEDULE", "cron(0 2 * * ? *)")
+
+        glue.CfnTrigger(
+            self,
+            "Trigger1Scheduled",
+            name="globalpartners_trigger_1_scheduled",
+            type="SCHEDULED",
+            schedule=pipeline_schedule,
+            workflow_name=workflow_name,
+            start_on_creation=False,   # don't fire immediately on deploy
+            actions=[
+                glue.CfnTrigger.ActionProperty(
+                    job_name=ingestion_job_name,
+                )
+            ],
+        )
+
+        # ── Trigger 2: On success of ingestion_job ──────────────────
+        # CONDITIONAL type triggers watch for a predecessor job/crawler
+        # to reach a specific state before firing.
+        # Only fires if ingestion_job succeeds. Failure stops the chain.
+        glue.CfnTrigger(
+            self,
+            "Trigger2BronzeToSilver",
+            name="globalpartners_trigger_2_bronze_to_silver",
+            type="CONDITIONAL",
+            workflow_name=workflow_name,
+            start_on_creation=False,
+            predicate=glue.CfnTrigger.PredicateProperty(
+                # AND = all conditions must be met (we only have one here)
+                logical="AND",
+                conditions=[
+                    glue.CfnTrigger.ConditionProperty(
+                        job_name=ingestion_job_name,
+                        logical_operator="EQUALS",
+                        state="SUCCEEDED",
+                    )
+                ],
+            ),
+            actions=[
+                glue.CfnTrigger.ActionProperty(
+                    job_name=bronze_to_silver_name,
+                )
+            ],
+        )
+
+        # ── Trigger 3: On success of bronze_to_silver_job ──────────
+        # Only fires if bronze_to_silver_job succeeds.
+        # If bronze_to_silver_job fails, Gold is never touched
+        glue.CfnTrigger(
+            self,
+            "Trigger3SilverToGold",
+            name="globalpartners_trigger_3_silver_to_gold",
+            type="CONDITIONAL",
+            workflow_name=workflow_name,
+            start_on_creation=False,
+            predicate=glue.CfnTrigger.PredicateProperty(
+                logical="AND",
+                conditions=[
+                    glue.CfnTrigger.ConditionProperty(
+                        job_name=bronze_to_silver_name,
+                        logical_operator="EQUALS",
+                        state="SUCCEEDED",
+                    )
+                ],
+            ),
+            actions=[
+                glue.CfnTrigger.ActionProperty(
+                    job_name=silver_to_gold_name,
+                )
+            ],
+        )
+
