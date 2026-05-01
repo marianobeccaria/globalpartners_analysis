@@ -15,7 +15,7 @@
 #          s3://<bucket>/gold/location_performance/
 
 import sys
-from datetime import datetime, timezone
+#from datetime import datetime, timezone
 
 from awsglue.context import GlueContext
 from awsglue.job import Job
@@ -71,19 +71,13 @@ rfm_months    = int(args["RFM_MONTHS"])
 SILVER_BASE = f"s3://{bucket}/{silver_prefix}"
 GOLD_BASE   = f"s3://{bucket}/{gold_prefix}"
 
-# Reference date — "today" from the pipeline's perspective.
-# Used consistently across ALL metrics so every calculation
-# uses the same point in time within a single pipeline run.
-reference_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-
-# Reusable Spark date column for datediff() calculations
-ref_date_col = to_date(lit(reference_date))
+# Reference date is derived from the data after reading Silver (see Step 1)
+# This ensures RFM/churn windows are relative to the data, not the calendar.
 
 print(f"{'='*60}")
 print(f"silver_to_gold_job started")
 print(f"Silver source   : {SILVER_BASE}")
 print(f"Gold output     : {GOLD_BASE}")
-print(f"Reference date  : {reference_date}")
 print(f"Churn threshold : {churn_days} days")
 print(f"RFM lookback    : {rfm_months} months")
 print(f"{'='*60}")
@@ -116,11 +110,19 @@ df = spark.read.parquet(f"{SILVER_BASE}/orders_enriched/")
 # Cast order_date to DateType for accurate date arithmetic
 df = df.withColumn("order_date", to_date(col("order_date")))
 
-total_rows = df.count()
-print(f"  Total rows loaded : {total_rows:,}")
-print(f"  Schema:")
-df.printSchema()
+# Derive reference date from max order date in the dataset.
+# For a live pipeline this would be today (datetime.now).
+# For a historical dataset we use the data's own max date
+# so RFM/churn windows are always relative to the data,
+# not the calendar — avoids empty tables when data is historical.
+max_order_date = df.agg({"order_date": "max"}).collect()[0][0]
+reference_date = max_order_date.strftime("%Y-%m-%d")
+ref_date_col   = to_date(lit(reference_date))
 
+total_rows = df.count()
+print(f"  Total rows loaded   : {total_rows:,}")
+print(f"  Reference date      : {reference_date}  (max order date in dataset)")
+df.printSchema()
 
 # ══════════════════════════════════════════════════════════════
 # METRIC 1 — customer_clv_daily (PRIMARY METRIC)
