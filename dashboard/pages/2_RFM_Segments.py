@@ -121,7 +121,7 @@ with col_left:
         yaxis_title="Number of Customers",
         showlegend=False,
     )
-    st.plotly_chart(fig_bar, use_container_width=True)
+    st.plotly_chart(fig_bar, width='stretch')
 
 with col_right:
     st.subheader("Segment Profiles — Avg RFM Metrics")
@@ -142,7 +142,7 @@ with col_right:
 
     st.dataframe(
         profile,
-        use_container_width=True,
+        width='stretch',
         hide_index=True,
         height=340,
     )
@@ -179,7 +179,7 @@ with col_hist:
         yaxis_range=[2, 13],   # give a little breathing room above/below
         showlegend=False,      # color already identifies segment on x-axis
     )
-    st.plotly_chart(fig_box, use_container_width=True)
+    st.plotly_chart(fig_box, width='stretch')
 
 with col_scatter:
     st.subheader("Frequency vs Monetary by Segment")
@@ -232,7 +232,7 @@ with col_scatter:
         legend_title="Segment",
     )
 
-    st.plotly_chart(fig_scatter, use_container_width=True)
+    st.plotly_chart(fig_scatter, width='stretch')
 
     if outlier_count > 0:
         st.caption(
@@ -281,7 +281,7 @@ fig_grouped.update_layout(
     yaxis_range=[0, 4.5],
     legend_title="RFM Dimension",
 )
-st.plotly_chart(fig_grouped, use_container_width=True)
+st.plotly_chart(fig_grouped, width='stretch')
 
 st.divider()
 
@@ -312,4 +312,4 @@ actions = pd.DataFrame({
     ],
 })
 
-st.dataframe(actions, use_container_width=True, hide_index=True)
+st.dataframe(actions, width='stretch', hide_index=True)

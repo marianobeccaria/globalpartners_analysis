@@ -119,7 +119,7 @@ with col_left:
         margin=dict(t=10, b=10, l=10, r=10),
         showlegend=False,
     )
-    st.plotly_chart(fig_donut, use_container_width=True)
+    st.plotly_chart(fig_donut, width='stretch')
 
 with col_right:
     st.subheader("Days Since Last Order")
@@ -150,7 +150,7 @@ with col_right:
         yaxis_title="Customers",
         legend_title="At Risk",
     )
-    st.plotly_chart(fig_hist, use_container_width=True)
+    st.plotly_chart(fig_hist, width='stretch')
 
 st.divider()
 
@@ -198,7 +198,7 @@ with col_spend:
             yaxis_title="Customers",
             showlegend=False,
         )
-        st.plotly_chart(fig_spend, use_container_width=True)
+        st.plotly_chart(fig_spend, width='stretch')
         st.caption(
             f"Showing {len(df_spend):,} customers active in both 90-day windows. "
             f"{total - len(df_spend):,} customers had no activity in one or both windows."
@@ -237,7 +237,7 @@ with col_gap:
         yaxis_title="Customers",
         legend_title="At Risk",
     )
-    st.plotly_chart(fig_gap, use_container_width=True)
+    st.plotly_chart(fig_gap, width='stretch')
 
     # fig_gap = px.box(
     #     df_gap,
@@ -256,7 +256,7 @@ with col_gap:
     #     xaxis_tickvals=[False, True],
     #     showlegend=False,
     # )
-    # st.plotly_chart(fig_gap, use_container_width=True)
+    # st.plotly_chart(fig_gap, width='stretch')
 
 st.divider()
 
@@ -317,7 +317,7 @@ fig_spend_box.update_layout(
     yaxis_title="Lifetime Spend ($)",
     showlegend=False,
 )
-st.plotly_chart(fig_spend_box, use_container_width=True)
+st.plotly_chart(fig_spend_box, width='stretch')
 
 st.divider()
 
@@ -357,7 +357,7 @@ at_risk_table["Avg Order Gap (days)"] = at_risk_table["Avg Order Gap (days)"].ap
 
 st.dataframe(
     at_risk_table.head(50),
-    use_container_width=True,
+    width='stretch',
     hide_index=True,
 )
 st.caption(f"Showing top 50 of {len(at_risk_df):,} at-risk customers by lifetime spend.")

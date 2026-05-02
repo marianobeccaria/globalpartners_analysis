@@ -112,7 +112,7 @@ with col_left:
         margin=dict(t=10, b=10, l=10, r=10),
         showlegend=False,
     )
-    st.plotly_chart(fig_donut, use_container_width=True)
+    st.plotly_chart(fig_donut, width='stretch')
 
 with col_right:
     st.subheader("Avg CLV by Tier")
@@ -137,7 +137,7 @@ with col_right:
         xaxis_tickprefix="$",
         xaxis_tickformat=",.0f",
     )
-    st.plotly_chart(fig_bar, use_container_width=True)
+    st.plotly_chart(fig_bar, width='stretch')
 
 st.divider()
 
@@ -164,7 +164,7 @@ fig_line.update_layout(
     yaxis_tickprefix="$",
     yaxis_tickformat=",.0f",
 )
-st.plotly_chart(fig_line, use_container_width=True)
+st.plotly_chart(fig_line, width='stretch')
 
 st.divider()
 
@@ -192,7 +192,7 @@ with col_loy:
         xaxis_title="",
         showlegend=False,
     )
-    st.plotly_chart(fig_loy, use_container_width=True)
+    st.plotly_chart(fig_loy, width='stretch')
 
 with col_top:
     st.subheader("🏆 Top 10 Customers by CLV")
@@ -202,5 +202,5 @@ with col_top:
     top10.columns = ["Customer ID", "Total Revenue", "CLV Tier", "Loyalty Member"]
     top10["Total Revenue"] = top10["Total Revenue"].apply(lambda x: f"${x:,.2f}")
     top10["Customer ID"] = top10["Customer ID"].astype(str).str[:12] + "..."
-    st.dataframe(top10, use_container_width=True, hide_index=True)
+    st.dataframe(top10, width='stretch', hide_index=True)
     

@@ -31,6 +31,7 @@ st.divider()
 
 # ── Load data ──────────────────────────────────────────────────────────────────
 df = load_sales_trends()
+print(df.head(10))
 
 if df.empty:
     st.error("No sales trend data available. Please run the pipeline first.")
@@ -169,7 +170,7 @@ fig_trend.update_layout(
     yaxis_tickformat=",.0f",
     hovermode="x unified",
 )
-st.plotly_chart(fig_trend, use_container_width=True)
+st.plotly_chart(fig_trend, width='stretch')
 
 st.divider()
 
@@ -201,7 +202,7 @@ with col_cat:
         xaxis_tickprefix="$",
         xaxis_tickformat=",.0f",
     )
-    st.plotly_chart(fig_cat, use_container_width=True)
+    st.plotly_chart(fig_cat, width='stretch')
 
 with col_dow:
     st.subheader("Revenue by Day of Week")
@@ -248,7 +249,7 @@ with col_dow:
         showarrow=False,
         font=dict(color="#e74c3c", size=11),
     )
-    st.plotly_chart(fig_dow, use_container_width=True)
+    st.plotly_chart(fig_dow, width='stretch')
 
 st.divider()
 
@@ -297,7 +298,7 @@ fig_heat.update_layout(
     xaxis_title="Year",
     yaxis_title="Month",
 )
-st.plotly_chart(fig_heat, use_container_width=True)
+st.plotly_chart(fig_heat, width='stretch')
 
 st.divider()
 
@@ -337,7 +338,7 @@ with col_h1:
         showlegend=False,
         title="Avg Daily Revenue: Holiday vs Regular",
     )
-    st.plotly_chart(fig_hol, use_container_width=True)
+    st.plotly_chart(fig_hol, width='stretch')
 
 with col_h2:
     # Named holidays table
@@ -362,6 +363,6 @@ with col_h2:
         else:
             st.dataframe(
                 holiday_named,
-                use_container_width=True,
+                width='stretch',
                 hide_index=True,
             )

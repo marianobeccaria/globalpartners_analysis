@@ -42,6 +42,16 @@ with st.spinner("Loading dashboard data..."):
     df_loyalty  = load_loyalty()
     df_location = load_locations()
 
+# Getting some sample data in the logs to examine
+print("=" * 110)
+print(f"Sample `df_clv`: \n{df_clv.head(5)}\n")
+print(f"Sample `df_rfm`: \n{df_rfm.head(5)}\n")
+print(f"Sample `df_churn`: \n{df_churn.head(5)}\n")
+print(f"Sample `df_trends`: \n{df_trends.head(5)}\n")
+print(f"Sample `df_loyalty`: \n{df_loyalty.head(5)}\n")
+print(f"Sample `df_location`: \n{df_location.head(5)}\n")
+print("=" * 110)
+
 # ── KPI Cards Row 1 ────────────────────────────────────────────────────────────
 st.subheader("📊 Key Business Metrics")
 
@@ -111,7 +121,7 @@ with col_left:
             height=280,
             showlegend=True,
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
 
 with col_right:
     st.subheader("🎯 Recency*Frequency*Monetary Segment Distribution")
@@ -137,7 +147,7 @@ with col_right:
             yaxis_title="Customers",
             showlegend=False,
         )
-        st.plotly_chart(fig2, use_container_width=True)
+        st.plotly_chart(fig2, width='stretch')
 
 st.divider()
 
@@ -165,6 +175,6 @@ if not df_trends.empty:
         yaxis_tickprefix="$",
         yaxis_tickformat=",.0f",
     )
-    st.plotly_chart(fig3, use_container_width=True)
+    st.plotly_chart(fig3, width='stretch')
 
 st.caption("Data refreshes every hour. Pipeline runs daily at 2:00 AM UTC.")
