@@ -512,16 +512,22 @@ df_location = df.groupBy("restaurant_id") \
         _round(col("total_revenue") / col("total_orders"), 2)
     )
 
+# Compute total locations dynamically so tier thresholds
+# stay correct if new restaurants are added in the future
+total_locs       = df_location.count()
+top_threshold    = 5
+bottom_threshold = total_locs - 2  # last 3 locations = Needs Attention
+
 # Rank locations by total revenue — highest revenue = rank 1
-# dense_rank() ensures no rank numbers are skipped on ties
 rank_window = Window.orderBy(col("total_revenue").desc())
 
+# dense_rank() ensures no rank numbers are skipped on ties
 df_location = df_location \
     .withColumn("revenue_rank", dense_rank().over(rank_window)) \
     .withColumn(
         "performance_tier",
-        when(col("revenue_rank") <= 5,  lit("Top Performer"))
-        .when(col("revenue_rank") >= 24, lit("Needs Attention"))
+        when(col("revenue_rank") <= top_threshold, lit("Top Performer"))
+        .when(col("revenue_rank") >= bottom_threshold, lit("Needs Attention"))
         .otherwise(lit("Mid Tier"))
     )
 
