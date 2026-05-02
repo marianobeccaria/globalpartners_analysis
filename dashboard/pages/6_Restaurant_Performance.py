@@ -270,63 +270,82 @@ st.caption(
     "Select specific locations to compare directly."
 )
 
-all_location_labels = df.set_index("restaurant_id")["location_label"].to_dict()
+# ── Smart default ──────────────────────────────────────────────────────────────
+MAX_DEFAULT_LOCATIONS    = 10
+MAX_SELECTABLE_LOCATIONS = 40
+RESTAURANT_SELECTION_KEY = "restaurant_selection_trend_v2"
 
-# ── Smart default: show all if ≤ 10, top 10 by revenue if > 10 ───────────────
-# Cap at 10 to avoid an unreadable chart — user can add/remove via multiselect
-MAX_DEFAULT_LOCATIONS = 10
-MAX_SELECTABLE_LOCATIONS = 40  # hard cap — beyond this the chart becomes unusable
+# Build selector options and labels first
+location_options = df.sort_values("revenue_rank")[[
+    "restaurant_id",
+    "revenue_rank",
+]].copy()
 
-all_location_labels = df.set_index("restaurant_id")["location_label"].to_dict()
+print(f"location_options:\n{location_options}\n")
 
-# Build options list first
-selectable_options = df.sort_values("revenue_rank")["restaurant_id"].tolist()
+location_options["rank_label"] = (
+    location_options["revenue_rank"]
+    .astype(int)
+    .astype(str)
+    .str.zfill(2)
+)
+
+# Generate the selector labels from last 6 digits from restaurant_id
+# rather than using 6 first in order to avoid duplicates
+location_options["selector_label"] = (
+    "#"
+    + location_options["rank_label"]
+    + " Loc-"
+    + location_options["restaurant_id"].astype(str).str[-6:]
+)
+
+selectable_options = location_options["restaurant_id"].tolist()
+
 if total_locations > MAX_SELECTABLE_LOCATIONS:
     selectable_options = selectable_options[:MAX_SELECTABLE_LOCATIONS]
+    location_options = location_options[
+        location_options["restaurant_id"].isin(selectable_options)
+    ]
+
     st.info(
         f"ℹ️ Selection limited to top {MAX_SELECTABLE_LOCATIONS} restaurants "
-        f"by revenue to keep the chart readable."
+        f"by revenue to keep the chart readable. "
+        f"{total_locations - MAX_SELECTABLE_LOCATIONS} lowest-ranked locations excluded."
     )
+
+all_location_labels = location_options.set_index("restaurant_id")[
+    "selector_label"
+].to_dict()
+
+print(f"After location_options:\n{location_options}")
+
 
 # Initialize session state on first load only
-if "restaurant_selection" not in st.session_state:
-    if len(selectable_options) <= MAX_DEFAULT_LOCATIONS:
-        st.session_state["restaurant_selection"] = selectable_options
-    else:
-        st.session_state["restaurant_selection"] = selectable_options[:MAX_DEFAULT_LOCATIONS]
+default_selection = selectable_options[:MAX_DEFAULT_LOCATIONS]
 
-# ── Select All / Clear All buttons ────────────────────────────────────────────
-btn_col1, btn_col2, caption_col = st.columns([1, 1, 6])
-
-with btn_col1:
-    if st.button("Select All"):
-        st.session_state["restaurant_selection"] = selectable_options
-
-with btn_col2:
-    if st.button("Clear All"):
-        st.session_state["restaurant_selection"] = []
-
-# Show how many are currently selected
-with caption_col:
-    current_count = len(st.session_state["restaurant_selection"])
-    st.caption(
-        f"Showing {current_count} of {len(selectable_options)} restaurants. "
-        f"Use buttons to select/clear all, or pick individually below."
-    )
+if RESTAURANT_SELECTION_KEY not in st.session_state:
+    st.session_state[RESTAURANT_SELECTION_KEY] = default_selection
+else:
+    valid_options = set(selectable_options)
+    st.session_state[RESTAURANT_SELECTION_KEY] = [
+        restaurant_id
+        for restaurant_id in st.session_state[RESTAURANT_SELECTION_KEY]
+        if restaurant_id in valid_options
+    ]
 
 selected_compare = st.multiselect(
     "Select restaurants to compare",
     options=selectable_options,
-    default=st.session_state["restaurant_selection"],
-    key="restaurant_selection",
-    format_func=lambda x: all_location_labels.get(x, str(x)[:8]),
+    key=RESTAURANT_SELECTION_KEY,
+    format_func=lambda x: all_location_labels.get(x, str(x)),
 )
 
-if selected_compare and not df_trends.empty:
+st.caption(
+    f"Showing {len(selected_compare)} of {len(selectable_options)} restaurants selected."
+)
 
-    if len(selected_compare) > MAX_SELECTABLE_LOCATIONS:
-        selected_compare = selected_compare[:MAX_SELECTABLE_LOCATIONS]
-        st.warning(f"⚠️ Too many selected. Showing top {MAX_SELECTABLE_LOCATIONS} only.")
+# ── Plot ───────────────────────────────────────────────────────────────────────
+if selected_compare and not df_trends.empty:
 
     trend_filtered = df_trends[
         df_trends["restaurant_id"].isin(selected_compare)

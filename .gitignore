@@ -35,6 +35,7 @@ secrets.yaml
 .ipynb_checkpoints/
 .vscode/
 .claude
+.codex
 
 # OS
 .DS_Store
