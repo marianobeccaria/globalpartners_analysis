@@ -42,3 +42,6 @@ Thumbs.db
 
 # Conda
 *.conda
+
+# Local exploratory Testing
+src/testing
