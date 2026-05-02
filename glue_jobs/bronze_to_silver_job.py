@@ -154,16 +154,15 @@ print(f"  Rows after cleaning : {df_items.count():,}")
 
 # ══════════════════════════════════════════════════════════════
 # STEP 4 — REMEDIATE date_dim
-# EDA Finding #6: date_dim only covers 2023. Orders span 2020–2024.
-# EDA Finding #7: date_dim.date_key uses DD-MM-YYYY format, but
-#                 order_date is YYYY-MM-DD. Must align before joining.
-#
-# Strategy: Generate a complete date_dim programmatically for
-# 2020-01-01 through 2024-12-31, replacing the incomplete source.
+# Strategy:
+#   1. Generate full date spine 2020–2024 (fixes coverage gap)
+#   2. Reformat source date_dim date_key DD-MM-YYYY → YYYY-MM-DD
+#   3. Left join spine with source holidays so we preserve
+#      is_holiday and holiday_name from the original CSV
 # ══════════════════════════════════════════════════════════════
 print("\n── STEP 4: Regenerating date_dim for 2020–2024 ──")
 
-# Generate all dates from 2020-01-01 to 2024-12-31
+# Step 4a: Generate full date spine
 start_date = date(2020, 1, 1)
 end_date   = date(2024, 12, 31)
 all_dates  = []
@@ -173,15 +172,13 @@ while current <= end_date:
     all_dates.append((current,))
     current += timedelta(days=1)
 
-# Define schema for generated date_dim
 date_schema = StructType([
     StructField("date_key", DateType(), False),
 ])
 
-# Build DataFrame from generated dates
 df_date_generated = spark.createDataFrame(all_dates, schema=date_schema)
 
-# Add all calendar columns matching original date_dim structure
+# Add calendar columns
 df_date_full = df_date_generated \
     .withColumn("year",        year(col("date_key"))) \
     .withColumn("month",       date_format(col("date_key"), "MMMM")) \
@@ -190,13 +187,45 @@ df_date_full = df_date_generated \
     .withColumn("is_weekend",
         when(dayofweek(col("date_key")).isin([1, 7]), lit(True))
         .otherwise(lit(False))
+    )
+
+# Step 4b: Reformat source date_dim date_key from DD-MM-YYYY → YYYY-MM-DD
+# so it can join with our generated spine
+df_date_source = df_date \
+    .withColumn(
+        "date_key_clean",
+        to_date(col("date_key"), "dd-MM-yyyy")
     ) \
-    .withColumn("is_holiday",  lit(False).cast(BooleanType())) \
-    .withColumn("holiday_name", lit(None).cast(StringType()))
+    .select(
+        col("date_key_clean").alias("date_key"),
+        col("is_holiday"),
+        col("holiday_name"),
+    )
 
-print(f"  Generated date_dim rows : {df_date_full.count():,}")
-print(f"  Coverage               : {start_date} → {end_date}")
+print(f"  Source date_dim holidays : {df_date_source.filter(col('is_holiday') == True).count():,}")
 
+# Step 4c: Left join spine with source holidays
+# Dates in 2020–2022 and 2024 won't match (source only covers 2023)
+# — those get is_holiday=False and holiday_name=null which is correct
+df_date_full = df_date_full.join(
+    df_date_source,
+    on="date_key",
+    how="left"
+) \
+.withColumn(
+    "is_holiday",
+    when(col("is_holiday").isNull(), lit(False))
+    .otherwise(col("is_holiday").cast(BooleanType()))
+) \
+.withColumn(
+    "holiday_name",
+    col("holiday_name").cast(StringType())
+)
+
+holiday_count = df_date_full.filter(col("is_holiday") == True).count()
+print(f"  Generated date_dim rows  : {df_date_full.count():,}")
+print(f"  Holidays preserved       : {holiday_count:,}")
+print(f"  Coverage                 : {start_date} → {end_date}")
 
 # ══════════════════════════════════════════════════════════════
 # STEP 5 — JOIN order_items ↔ order_item_options
