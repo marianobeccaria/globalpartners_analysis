@@ -3,11 +3,13 @@ import tempfile
 from dotenv import load_dotenv
 from aws_cdk import (
     Stack,
+    CfnOutput,
     aws_iam as iam,
     aws_s3 as s3,
     aws_s3_deployment as s3deploy,
     aws_logs as logs,
     aws_glue as glue,
+    aws_ec2 as ec2,
 )
 from constructs import Construct
 
@@ -23,6 +25,10 @@ class GlobalPartnersStack(Stack):
         # ── Config from .env ────────────────────────────────────────
         bucket_name    = os.getenv("S3_BUCKET_NAME")
         glue_role_name = os.getenv("GLUE_ROLE_NAME")
+        dashboard_instance_type = os.getenv("DASHBOARD_INSTANCE_TYPE", "t3.small")
+        dashboard_allowed_cidr  = os.getenv("DASHBOARD_ALLOWED_CIDR", "0.0.0.0/0")
+        dashboard_port          = int(os.getenv("DASHBOARD_PORT", "8501"))
+
 
         # ── Resource 1: IAM Role for Glue ──────────────────────────
         # Grants all three Glue jobs permission to:
@@ -112,7 +118,6 @@ class GlobalPartnersStack(Stack):
         )
 
         # Upload local Glue job scripts to the S3 prefix used by the Glue jobs.
-        # The Glue job definitions below reference s3://<bucket>/glue_scripts/*.py.
         repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
         glue_scripts_path = os.path.join(repo_root, "glue_jobs")
 
@@ -132,6 +137,32 @@ class GlobalPartnersStack(Stack):
             destination_key_prefix="glue_scripts",
             prune=False,
         )
+
+        # Upload dashboard app to S3
+        dashboard_app_path = os.path.join(repo_root, "dashboard")
+
+        dashboard_app_deployment = s3deploy.BucketDeployment(
+            self,
+            "GlobalPartnersDashboardApp",
+            sources=[
+                s3deploy.Source.asset(
+                    dashboard_app_path,
+                    exclude=[
+                        "__pycache__/*",
+                        "**/__pycache__/*",
+                        "*.pyc",
+                        "**/*.pyc",
+                        ".venv/*",
+                        ".env",
+                        ".env.*",
+                    ],
+                )
+            ],
+            destination_bucket=bucket,
+            destination_key_prefix="dashboard_app",
+            prune=True,
+        )
+
 
         # ── Resource 3: CloudWatch Log Groups ──────────────────────
         # One log group per Glue job.
@@ -449,4 +480,138 @@ class GlobalPartnersStack(Stack):
                     job_name=discount_job_name,
                 )
             ],
+        )
+
+        # Resource 7: EC2 Streamlit Dashboard
+        vpc = ec2.Vpc.from_lookup(
+            self,
+            "DefaultVpc",
+            is_default=True,
+        )
+
+        dashboard_sg = ec2.SecurityGroup(
+            self,
+            "GlobalPartnersDashboardSecurityGroup",
+            vpc=vpc,
+            description="Allow browser access to the Streamlit dashboard",
+            allow_all_outbound=True,
+        )
+
+        dashboard_sg.add_ingress_rule(
+            peer=ec2.Peer.ipv4(dashboard_allowed_cidr),
+            connection=ec2.Port.tcp(dashboard_port),
+            description="Streamlit dashboard access",
+        )
+
+        dashboard_role = iam.Role(
+            self,
+            "GlobalPartnersDashboardEc2Role",
+            assumed_by=iam.ServicePrincipal("ec2.amazonaws.com"),
+            managed_policies=[
+                iam.ManagedPolicy.from_aws_managed_policy_name(
+                    "AmazonSSMManagedInstanceCore"
+                ),
+            ],
+        )
+
+        dashboard_role.add_to_policy(
+            iam.PolicyStatement(
+                sid="ReadGoldAndDashboardAppObjects",
+                actions=["s3:GetObject"],
+                resources=[
+                    f"arn:aws:s3:::{bucket_name}/gold/*",
+                    f"arn:aws:s3:::{bucket_name}/dashboard_app/*",
+                ],
+            )
+        )
+
+        dashboard_role.add_to_policy(
+            iam.PolicyStatement(
+                sid="ListGoldAndDashboardAppPrefixes",
+                actions=["s3:ListBucket", "s3:GetBucketLocation"],
+                resources=[f"arn:aws:s3:::{bucket_name}"],
+                conditions={
+                    "StringLike": {
+                        "s3:prefix": [
+                            "gold/*",
+                            "dashboard_app/*",
+                        ]
+                    }
+                },
+            )
+        )
+
+        dashboard_service_file = "\n".join([
+            "cat > /etc/systemd/system/globalpartners-dashboard.service <<'EOF'",
+            "[Unit]",
+            "Description=GlobalPartners Streamlit Dashboard",
+            "After=network-online.target",
+            "Wants=network-online.target",
+            "",
+            "[Service]",
+            "User=ec2-user",
+            "Group=ec2-user",
+            "WorkingDirectory=/opt/globalpartners/dashboard",
+            f"Environment=S3_BUCKET_NAME={bucket_name}",
+            f"Environment=AWS_DEFAULT_REGION={self.region}",
+            f"ExecStart=/opt/globalpartners/venv/bin/streamlit run Home.py --server.address=0.0.0.0 --server.port={dashboard_port} --server.headless=true --browser.gatherUsageStats=false",
+            "Restart=always",
+            "RestartSec=10",
+            "",
+            "[Install]",
+            "WantedBy=multi-user.target",
+            "EOF",
+        ])
+
+        dashboard_user_data = ec2.UserData.for_linux()
+        dashboard_user_data.add_commands(
+            "set -euxo pipefail",
+            "dnf update -y",
+            "dnf install -y python3 python3-pip awscli",
+            "mkdir -p /opt/globalpartners/dashboard",
+            "aws s3 sync s3://{}/dashboard_app/ /opt/globalpartners/dashboard/ --delete".format(bucket_name),
+            "python3 -m venv /opt/globalpartners/venv",
+            "/opt/globalpartners/venv/bin/pip install --upgrade pip",
+            "/opt/globalpartners/venv/bin/pip install -r /opt/globalpartners/dashboard/requirements.txt",
+            "chown -R ec2-user:ec2-user /opt/globalpartners",
+            dashboard_service_file,
+            "systemctl daemon-reload",
+            "systemctl enable --now globalpartners-dashboard",
+        )
+
+        dashboard_instance = ec2.Instance(
+            self,
+            "GlobalPartnersDashboardInstance",
+            vpc=vpc,
+            vpc_subnets=ec2.SubnetSelection(subnet_type=ec2.SubnetType.PUBLIC),
+            instance_type=ec2.InstanceType(dashboard_instance_type),
+            machine_image=ec2.MachineImage.latest_amazon_linux2023(),
+            security_group=dashboard_sg,
+            role=dashboard_role,
+            user_data=dashboard_user_data,
+            associate_public_ip_address=True,
+            block_devices=[
+                ec2.BlockDevice(
+                    device_name="/dev/xvda",
+                    volume=ec2.BlockDeviceVolume.ebs(
+                        volume_size=20,
+                        encrypted=True,
+                        volume_type=ec2.EbsDeviceVolumeType.GP3,
+                    ),
+                )
+            ],
+        )
+
+        dashboard_instance.node.add_dependency(dashboard_app_deployment)
+
+        CfnOutput(
+            self,
+            "GlobalPartnersDashboardUrl",
+            value=f"http://{dashboard_instance.instance_public_dns_name}:{dashboard_port}",
+        )
+
+        CfnOutput(
+            self,
+            "GlobalPartnersDashboardInstanceId",
+            value=dashboard_instance.instance_id,
         )
