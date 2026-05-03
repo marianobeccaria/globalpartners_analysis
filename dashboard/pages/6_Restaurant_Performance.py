@@ -170,7 +170,7 @@ for tier, color in tier_colors.items():
         xanchor="right",
     )
 
-st.plotly_chart(fig_rank, width='stretch')
+st.plotly_chart(fig_rank, use_container_width=True)
 
 st.divider()
 
@@ -225,7 +225,7 @@ with col_scatter:
         yaxis_tickformat=",.0f",
         legend_title="Tier",
     )
-    st.plotly_chart(fig_scatter, width='stretch')
+    st.plotly_chart(fig_scatter, use_container_width=True)
 
 with col_table:
     st.subheader("Restaurant Scorecard")
@@ -384,7 +384,7 @@ if selected_compare and not df_trends.empty:
         yaxis_tickformat=",.0f",
         hovermode="x unified",
     )
-    st.plotly_chart(fig_trend, width='stretch')
+    st.plotly_chart(fig_trend, use_container_width=True)
 
 else:
     st.info("Select at least one restaurant to see the trend.")

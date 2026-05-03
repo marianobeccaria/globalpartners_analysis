@@ -127,7 +127,7 @@ with col_left:
             height=280,
             showlegend=True,
         )
-        st.plotly_chart(fig, width='stretch')
+        st.plotly_chart(fig, use_container_width=True)
 
 with col_right:
     st.subheader("🎯 Recency*Frequency*Monetary Segment Distribution")
@@ -153,7 +153,7 @@ with col_right:
             yaxis_title="Customers",
             showlegend=False,
         )
-        st.plotly_chart(fig2, width='stretch')
+        st.plotly_chart(fig2, use_container_width=True)
 
 st.divider()
 
@@ -181,6 +181,6 @@ if not df_trends.empty:
         yaxis_tickprefix="$",
         yaxis_tickformat=",.0f",
     )
-    st.plotly_chart(fig3, width='stretch')
+    st.plotly_chart(fig3, use_container_width=True)
 
 st.caption("Data refreshes every hour. Pipeline runs daily at 2:00 AM UTC.")

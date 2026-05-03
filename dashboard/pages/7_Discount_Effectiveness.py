@@ -208,7 +208,7 @@ with col_left:
         margin=dict(t=10, b=10, l=10, r=10),
         showlegend=False,
     )
-    st.plotly_chart(fig_donut, width='stretch')
+    st.plotly_chart(fig_donut, use_container_width=True)
 
 with col_right:
     st.subheader("Promotional Order Rate Over Time")
@@ -237,7 +237,7 @@ with col_right:
         yaxis_title="Promotional Order Rate (%)",
         yaxis_ticksuffix="%",
     )
-    st.plotly_chart(fig_rate, width='stretch')
+    st.plotly_chart(fig_rate, use_container_width=True)
 
 st.divider()
 
@@ -278,7 +278,7 @@ with col_box:
         yaxis_tickformat=",.0f",
         showlegend=False,
     )
-    st.plotly_chart(fig_box, width='stretch')
+    st.plotly_chart(fig_box, use_container_width=True)
 
 # with col_bar:
 #     # Avg basket by order type
@@ -302,7 +302,7 @@ with col_box:
 #         yaxis_tickformat=",.0f",
 #         showlegend=False,
 #     )
-#     st.plotly_chart(fig_avg, width='stretch')
+#     st.plotly_chart(fig_avg, use_container_width=True)
 
 with col_bar:
     # Avg basket by order type
@@ -344,7 +344,7 @@ with col_bar:
         yaxis_tickformat=",.0f",
         showlegend=False,
     )
-    st.plotly_chart(fig_avg, width='stretch')
+    st.plotly_chart(fig_avg, use_container_width=True)
 
 st.divider()
 
@@ -386,7 +386,7 @@ with col_loc:
         xaxis_ticksuffix="%",
         yaxis_title="",
     )
-    st.plotly_chart(fig_loc, width='stretch')
+    st.plotly_chart(fig_loc, use_container_width=True)
 
 with col_loy:
     st.subheader("Promotional Orders: Loyalty vs Non-Members")
@@ -437,7 +437,7 @@ with col_loy:
         xaxis_ticksuffix="%",
         showlegend=False,
     )
-    st.plotly_chart(fig_loy, width='stretch')
+    st.plotly_chart(fig_loy, use_container_width=True)
 
 st.divider()
 

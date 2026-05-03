@@ -120,7 +120,7 @@ with col_left:
         margin=dict(t=10, b=10, l=10, r=10),
         showlegend=False,
     )
-    st.plotly_chart(fig_donut, width='stretch')
+    st.plotly_chart(fig_donut, use_container_width=True)
 
 with col_right:
     st.subheader("Avg CLV: Loyalty vs Non-Members")
@@ -143,7 +143,7 @@ with col_right:
         xaxis_title="",
         showlegend=False,
     )
-    st.plotly_chart(fig_clv, width='stretch')
+    st.plotly_chart(fig_clv, use_container_width=True)
 
 st.divider()
 
@@ -245,7 +245,7 @@ fig_grouped.update_layout(
     yaxis_title="Index (Non-member = 100)",
     legend_title="Group",
 )
-st.plotly_chart(fig_grouped, width='stretch')
+st.plotly_chart(fig_grouped, use_container_width=True)
 
 st.divider()
 
@@ -288,7 +288,7 @@ if not df_clv.empty:
         yaxis_tickformat=",.0f",
         showlegend=False,
     )
-    st.plotly_chart(fig_dist, width='stretch')
+    st.plotly_chart(fig_dist, use_container_width=True)
 
 st.divider()
 
