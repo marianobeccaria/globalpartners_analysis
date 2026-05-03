@@ -358,3 +358,68 @@ class GlobalPartnersStack(Stack):
             ],
         )
 
+    # ── Resource 6: Discount Effectiveness Glue Job ────────────────
+        discount_job_name = os.getenv("DISCOUNT_JOB_NAME")
+
+        # CloudWatch Log Group
+        logs.LogGroup(
+            self,
+            "DiscountJobLogGroup",
+            log_group_name=f"/aws-glue/jobs/{discount_job_name}",
+            retention=retention,
+        )
+
+        # Glue Spark Job
+        glue.CfnJob(
+            self,
+            "DiscountEffectivenessJob",
+            name=discount_job_name,
+            role=glue_role_arn,
+            command=glue.CfnJob.JobCommandProperty(
+                name="glueetl",
+                python_version="3",
+                script_location=f"{script_base}/discount_effectiveness_job.py",
+            ),
+            default_arguments={
+                "--job-language":                    "python",
+                "--TempDir":                         f"s3://{bucket_name}/tmp/",
+                "--enable-continuous-cloudwatch-log": "true",
+                "--enable-metrics":                  "true",
+                "--enable-spark-ui":                 "true",
+                "--spark-event-logs-path":           f"s3://{bucket_name}/spark-logs/",
+                "--S3_BUCKET":                       bucket_name,
+                "--SILVER_PREFIX":                   "silver",
+                "--GOLD_PREFIX":                     "gold",
+            },
+            worker_type="G.1X",
+            number_of_workers=2,
+            max_retries=1,
+            timeout=60,
+            glue_version="4.0",
+            description="GlobalPartners — discount effectiveness from Silver",
+        )
+
+        # Trigger 4: On success of silver_to_gold_job
+        glue.CfnTrigger(
+            self,
+            "Trigger4DiscountEffectiveness",
+            name="globalpartners_trigger_4_discount_effectiveness",
+            type="CONDITIONAL",
+            workflow_name=workflow_name,
+            start_on_creation=False,
+            predicate=glue.CfnTrigger.PredicateProperty(
+                logical="AND",
+                conditions=[
+                    glue.CfnTrigger.ConditionProperty(
+                        job_name=silver_to_gold_name,
+                        logical_operator="EQUALS",
+                        state="SUCCEEDED",
+                    )
+                ],
+            ),
+            actions=[
+                glue.CfnTrigger.ActionProperty(
+                    job_name=discount_job_name,
+                )
+            ],
+        )

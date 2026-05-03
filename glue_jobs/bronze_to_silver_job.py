@@ -151,6 +151,50 @@ print(f"  Timestamps parsed as ISO8601")
 print(f"  order_date column extracted from creation_time_utc")
 print(f"  Rows after cleaning : {df_items.count():,}")
 
+# ── STEP 3b: Clean item_category names ────────────────────────────────────────
+# Source data contains corrupted category names with URLs, typos,
+# and trailing characters from data entry errors in the POS system.
+# Standardize these before Silver so all downstream metrics use
+# clean, consistent category names.
+print("\n── STEP 3b: Cleaning item_category names ──")
+
+from pyspark.sql.functions import regexp_replace, trim
+
+# Step 1: Strip any URLs (anything from "https" to end of string)
+df_items = df_items.withColumn(
+    "item_category",
+    regexp_replace(col("item_category"), r"https?://\S+", "")
+)
+
+# Step 2: Strip trailing non-alpha characters (digits, backticks, etc.)
+df_items = df_items.withColumn(
+    "item_category",
+    regexp_replace(col("item_category"), r"[^a-zA-Z\s&'\-]+$", "")
+)
+
+# Step 3: Trim whitespace
+df_items = df_items.withColumn(
+    "item_category",
+    trim(col("item_category"))
+)
+
+# Step 4: Fix known typos explicitly
+category_corrections = {
+    "Sqalads":    "Salads",
+    "Sandwiches": "Sandwiches",  # catches Sandwiches`1 after step 2
+}
+
+for wrong, correct in category_corrections.items():
+    df_items = df_items.withColumn(
+        "item_category",
+        when(col("item_category") == wrong, lit(correct))
+        .otherwise(col("item_category"))
+    )
+
+# Verify results
+print(f"  Unique categories after cleaning : {df_items.select('item_category').distinct().count()}")
+df_items.groupBy("item_category").count().orderBy("count", ascending=False).show(35, truncate=False)
+
 
 # ══════════════════════════════════════════════════════════════
 # STEP 4 — REMEDIATE date_dim
