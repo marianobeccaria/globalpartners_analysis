@@ -88,3 +88,10 @@ def load_loyalty() -> pd.DataFrame:
 @st.cache_data(ttl=3600, show_spinner="Loading location data...")
 def load_locations() -> pd.DataFrame:
     return _read_parquet_from_s3("location_performance")
+
+@st.cache_data(ttl=3600, show_spinner="Loading discount data...")
+def load_discount() -> pd.DataFrame:
+    df = _read_parquet_from_s3("discount_effectiveness")
+    if not df.empty:
+        df["order_date"] = pd.to_datetime(df["order_date"])
+    return df

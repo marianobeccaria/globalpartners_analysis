@@ -98,30 +98,46 @@ print("\n── STEP 2: Computing category price statistics ──")
 
 # Only include rows where item_price > 0 in the stats calculation
 # Zero-price items are already captured by Option 1 and should
-# not drag down the category average
+# not drag down the category average.
 df_priced = df.filter(col("item_price") > 0)
 
-category_window = Window.partitionBy("item_category")
+category_stats = df_priced.groupBy("item_category").agg(
+    _round(avg("item_price"), 4).alias("category_avg_price"),
+    _round(stddev("item_price"), 4).alias("category_stddev_price"),
+    count("item_price").alias("priced_item_count"),
+)
 
-df = df \
-    .withColumn(
-        "category_avg_price",
-        _round(avg("item_price").over(category_window), 4)
-    ) \
-    .withColumn(
-        "category_stddev_price",
-        _round(stddev("item_price").over(category_window), 4)
-    )
+# stddev is null when a category has only one positive-priced row.
+# Treat that as 0 so downstream threshold math stays valid.
+category_stats = category_stats.fillna({
+    "category_stddev_price": 0.0,
+})
+
+# Join positive-price category stats back to the full dataframe,
+# including zero-price rows that still need promotional detection.
+df = df.join(
+    category_stats,
+    on="item_category",
+    how="left",
+)
+
+# If a category has no positive-priced items at all, use a conservative fallback.
+df = df.fillna({
+    "category_avg_price": 0.0,
+    "category_stddev_price": 0.0,
+    "priced_item_count": 0,
+})
 
 # Print category stats for verification
-category_stats = df.groupBy("item_category").agg(
-    _round(avg("item_price"), 2).alias("avg_price"),
-    _round(stddev("item_price"), 2).alias("stddev_price"),
-    count("item_price").alias("item_count"),
+category_stats_for_log = category_stats.select(
+    col("item_category"),
+    col("category_avg_price").alias("avg_price"),
+    col("category_stddev_price").alias("stddev_price"),
+    col("priced_item_count").alias("item_count"),
 ).orderBy("avg_price", ascending=False)
 
 print(f"  Category price stats:")
-category_stats.show(20, truncate=False)
+category_stats_for_log.show(20, truncate=False)
 
 
 # ══════════════════════════════════════════════════════════════
