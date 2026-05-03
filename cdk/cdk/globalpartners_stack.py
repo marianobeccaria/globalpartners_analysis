@@ -108,6 +108,29 @@ class GlobalPartnersStack(Stack):
             "GlobalPartnersFolderStructure",
             sources=[s3deploy.Source.asset(tmp_dir)],
             destination_bucket=bucket,
+            prune=False,
+        )
+
+        # Upload local Glue job scripts to the S3 prefix used by the Glue jobs.
+        # The Glue job definitions below reference s3://<bucket>/glue_scripts/*.py.
+        repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+        glue_scripts_path = os.path.join(repo_root, "glue_jobs")
+
+        glue_scripts_deployment = s3deploy.BucketDeployment(
+            self,
+            "GlobalPartnersGlueScripts",
+            sources=[
+                s3deploy.Source.asset(
+                    glue_scripts_path,
+                    exclude=[
+                        "__pycache__/*",
+                        "*.pyc",
+                    ],
+                )
+            ],
+            destination_bucket=bucket,
+            destination_key_prefix="glue_scripts",
+            prune=False,
         )
 
         # ── Resource 3: CloudWatch Log Groups ──────────────────────
@@ -158,7 +181,7 @@ class GlobalPartnersStack(Stack):
         )
 
         # ── Resource 4: Glue Jobs ───────────────────────────────────
-        # 3 jobs defined as infrastructure-as-code.
+        # Glue jobs defined as infrastructure-as-code.
         # Each job references its PySpark script in S3 and receives
 
         glue_role_arn     = f"arn:aws:iam::{self.account}:role/{glue_role_name}"
@@ -172,7 +195,7 @@ class GlobalPartnersStack(Stack):
         # ── Job 1: ingestion_job (Python Shell) ─────────────────────
         # Python Shell — no Spark cluster needed for simple CSV reads.
         # Lighter and cheaper than a Spark job for ingestion.
-        glue.CfnJob(
+        ingestion_job = glue.CfnJob(
             self,
             "IngestionJob",
             name=ingestion_job_name,
@@ -198,11 +221,12 @@ class GlobalPartnersStack(Stack):
             glue_version="3.0",
             description="GlobalPartners — ingest source CSVs to Bronze S3 layer",
         )
+        ingestion_job.node.add_dependency(glue_scripts_deployment)
 
         # ── Job 2: bronze_to_silver_job (Spark) ─────────────────────
         # Spark job — handles joins, deduplication, and enrichment.
         # G.1X = 1 DPU worker (4 vCPU, 16GB RAM) — sufficient for 200K rows.
-        glue.CfnJob(
+        bronze_to_silver_job = glue.CfnJob(
             self,
             "BronzeToSilverJob",
             name=bronze_to_silver_name,
@@ -230,11 +254,12 @@ class GlobalPartnersStack(Stack):
             glue_version="4.0",
             description="GlobalPartners — Bronze to Silver transformation",
         )
+        bronze_to_silver_job.node.add_dependency(glue_scripts_deployment)
 
         # ── Job 3: silver_to_gold_job (Spark) ───────────────────────
         # Spark job — computes all 7 business metrics from Silver.
         # G.1X with 2 workers handles window functions on 200K rows.
-        glue.CfnJob(
+        silver_to_gold_job = glue.CfnJob(
             self,
             "SilverToGoldJob",
             name=silver_to_gold_name,
@@ -264,10 +289,11 @@ class GlobalPartnersStack(Stack):
             glue_version="4.0",
             description="GlobalPartners — Silver to Gold metric computation",
         )
+        silver_to_gold_job.node.add_dependency(glue_scripts_deployment)
         
         
         # ── Resource 5: Glue Workflow + Triggers ───────────────────
-        # The Workflow groups all three jobs under one single pipeline.
+        # The Workflow groups the Glue jobs under one single pipeline.
         # Triggers chain them together so each job only starts when
         # the previous one succeeds.
 
@@ -278,7 +304,7 @@ class GlobalPartnersStack(Stack):
             self,
             "GlobalPartnersWorkflow",
             name=workflow_name,
-            description="GlobalPartners daily pipeline — ingestion → bronze→silver → silver→gold",
+            description="GlobalPartners daily pipeline — ingestion → bronze→silver → silver→gold → discount effectiveness",
         )
 
         # ── Trigger 1: Scheduled ────────────────────────────────────
@@ -358,7 +384,7 @@ class GlobalPartnersStack(Stack):
             ],
         )
 
-    # ── Resource 6: Discount Effectiveness Glue Job ────────────────
+        # ── Resource 6: Discount Effectiveness Glue Job ────────────────
         discount_job_name = os.getenv("DISCOUNT_JOB_NAME")
 
         # CloudWatch Log Group
@@ -370,7 +396,7 @@ class GlobalPartnersStack(Stack):
         )
 
         # Glue Spark Job
-        glue.CfnJob(
+        discount_effectiveness_job = glue.CfnJob(
             self,
             "DiscountEffectivenessJob",
             name=discount_job_name,
@@ -398,6 +424,7 @@ class GlobalPartnersStack(Stack):
             glue_version="4.0",
             description="GlobalPartners — discount effectiveness from Silver",
         )
+        discount_effectiveness_job.node.add_dependency(glue_scripts_deployment)
 
         # Trigger 4: On success of silver_to_gold_job
         glue.CfnTrigger(

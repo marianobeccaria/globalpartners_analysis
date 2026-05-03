@@ -1,4 +1,4 @@
-# app.py
+# Home.py
 # GlobalPartners Business Insights Dashboard
 # Main entry point — renders the home/overview page
 # and configures sidebar navigation.
@@ -30,8 +30,6 @@ Use the pages below to explore each metric area.
 
 # ── Header ─────────────────────────────────────────────────────────────────────
 st.title("🍽️ GlobalPartners — Business Insights")
-st.caption("Restaurant chain performance across 28 locations | Data: Apr 2020 – Feb 2024")
-st.divider()
 
 # ── Load all data for KPI cards ────────────────────────────────────────────────
 with st.spinner("Loading dashboard data..."):
@@ -41,6 +39,14 @@ with st.spinner("Loading dashboard data..."):
     df_trends   = load_sales_trends()
     df_loyalty  = load_loyalty()
     df_location = load_locations()
+
+location_count = df_location["restaurant_id"].nunique() if not df_location.empty else 0
+st.caption(
+    f"Restaurant chain performance across {location_count} locations | "
+    "Data: Apr 2020 – Feb 2024"
+)
+
+st.divider()
 
 # Getting some sample data in the logs to examine
 print("=" * 110)

@@ -31,6 +31,9 @@ from pyspark.sql.functions import (
     date_format,
     dayofweek,
     weekofyear,
+    coalesce,
+    count as _count,
+    sum as _sum,
 )
 from pyspark.sql.types import (
     BooleanType,
@@ -273,21 +276,45 @@ print(f"  Coverage                 : {start_date} → {end_date}")
 
 # ══════════════════════════════════════════════════════════════
 # STEP 5 — JOIN order_items ↔ order_item_options
-# EDA Finding #5: 99.99% match rate (15 orphan options).
-# Using INNER join — the 15 orphan option rows are dropped
-# automatically since they have no matching parent in order_items.
+# Options are optional, so order_items must be the base table.
+# Aggregate option rows to line-item grain first, then LEFT JOIN.
+# This preserves items with no modifiers and prevents item revenue
+# from being duplicated when a line item has multiple options.
 # ══════════════════════════════════════════════════════════════
 print("\n── STEP 5: Joining order_items - order_item_options ──")
 
-df_joined = df_items.join(
-    df_options,
+df_option_revenue = df_options.groupBy("order_id", "lineitem_id") \
+    .agg(
+        _sum(col("option_price") * col("option_quantity")).alias("option_revenue"),
+        _count("*").alias("option_row_count"),
+    )
+
+df_item_keys = df_items.select("order_id", "lineitem_id").dropDuplicates()
+
+orphan_option_rows = df_options.join(
+    df_item_keys,
     on=["order_id", "lineitem_id"],
-    how="inner"
+    how="left_anti",
+).count()
+
+df_joined = df_items.join(
+    df_option_revenue,
+    on=["order_id", "lineitem_id"],
+    how="left",
 )
 
-print(f"  Rows after join : {df_joined.count():,}")
-print(f"  (15 orphan option rows dropped by inner join)")
+df_joined = df_joined \
+    .withColumn("option_revenue", coalesce(col("option_revenue"), lit(0.0))) \
+    .withColumn(
+        "option_row_count",
+        coalesce(col("option_row_count"), lit(0)).cast(IntegerType())
+    )
 
+items_without_options = df_joined.filter(col("option_row_count") == 0).count()
+
+print(f"  order_items rows preserved       : {df_joined.count():,}")
+print(f"  item rows without options        : {items_without_options:,}")
+print(f"  orphan option rows ignored       : {orphan_option_rows:,}")
 
 # ══════════════════════════════════════════════════════════════
 # STEP 6 — JOIN with date_dim
@@ -311,19 +338,13 @@ print(f"  Rows after date_dim join : {df_enriched.count():,}")
 
 # ══════════════════════════════════════════════════════════════
 # STEP 7 — COMPUTE gross_revenue
-# Revenue per line item = item revenue + option revenue
-#   item revenue   = item_price  × item_quantity
-#   option revenue = option_price × option_quantity
-# Note: No negative option_price found in EDA (no discounts).
-#       Formula is correct as-is; will capture discounts if they
-#       appear in future data as negative option_price values.
+# Revenue per line item = item revenue + aggregated option revenue
 # ══════════════════════════════════════════════════════════════
 print("\n── STEP 7: Computing gross_revenue ──")
 
 df_enriched = df_enriched.withColumn(
     "gross_revenue",
-    (col("item_price") * col("item_quantity")) +
-    (col("option_price") * col("option_quantity"))
+    (col("item_price") * col("item_quantity")) + col("option_revenue")
 )
 
 # Add year and month columns for Silver partitioning
@@ -363,7 +384,8 @@ df_enriched.write \
     .partitionBy("year", "month") \
     .parquet(output_path)
 
-print(f"  orders_enriched written to: {output_path}")
+print(f"  {orphan_option_rows:,} orphan option rows ignored")
+print(f"  {items_without_options:,} item rows without options preserved")
 print(f"  Partitioned by: year / month")
 print(f"  Total rows written: {df_enriched.count():,}")
 
