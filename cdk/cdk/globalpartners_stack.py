@@ -29,6 +29,16 @@ class GlobalPartnersStack(Stack):
         dashboard_allowed_cidr  = os.getenv("DASHBOARD_ALLOWED_CIDR", "0.0.0.0/0")
         dashboard_port          = int(os.getenv("DASHBOARD_PORT", "8501"))
 
+        github_repo = os.getenv("GITHUB_REPO", "marianobeccaria/globalpartners_analysis")
+        github_branch = os.getenv("GITHUB_BRANCH", "main")
+        github_actions_role_name = os.getenv(
+            "GITHUB_ACTIONS_ROLE_NAME",
+            "globalpartners-github-actions-role",
+        )
+        github_oidc_provider_arn = os.getenv("GITHUB_OIDC_PROVIDER_ARN")
+        cdk_qualifier = os.getenv("CDK_QUALIFIER", "hnb659fds")
+
+
 
         # ── Resource 1: IAM Role for Glue ──────────────────────────
         # Grants all three Glue jobs permission to:
@@ -604,6 +614,92 @@ class GlobalPartnersStack(Stack):
 
         dashboard_instance.node.add_dependency(dashboard_app_deployment)
 
+        # Resource 8: GitHub Actions OIDC Role for CI/CD
+        if github_oidc_provider_arn:
+            github_oidc_provider = iam.OpenIdConnectProvider.from_open_id_connect_provider_arn(
+                self,
+                "GitHubOidcProvider",
+                github_oidc_provider_arn,
+            )
+        else:
+            github_oidc_provider = iam.OpenIdConnectProvider(
+                self,
+                "GitHubOidcProvider",
+                url="https://token.actions.githubusercontent.com",
+                client_ids=["sts.amazonaws.com"],
+            )
+
+        github_actions_role = iam.Role(
+            self,
+            "GlobalPartnersGitHubActionsRole",
+            role_name=github_actions_role_name,
+            assumed_by=iam.WebIdentityPrincipal(
+                github_oidc_provider.open_id_connect_provider_arn,
+                conditions={
+                    "StringEquals": {
+                        "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
+                    },
+                    "StringLike": {
+                        "token.actions.githubusercontent.com:sub": (
+                            f"repo:{github_repo}:ref:refs/heads/{github_branch}"
+                        ),
+                    },
+                },
+            ),
+            description="OIDC role used by GitHub Actions to deploy GlobalPartners CDK stack",
+        )
+
+        github_actions_role.add_to_policy(
+            iam.PolicyStatement(
+                sid="AssumeCdkBootstrapRoles",
+                actions=["sts:AssumeRole"],
+                resources=[
+                    f"arn:aws:iam::{self.account}:role/cdk-{cdk_qualifier}-deploy-role-{self.account}-{self.region}",
+                    f"arn:aws:iam::{self.account}:role/cdk-{cdk_qualifier}-file-publishing-role-{self.account}-{self.region}",
+                    f"arn:aws:iam::{self.account}:role/cdk-{cdk_qualifier}-image-publishing-role-{self.account}-{self.region}",
+                    f"arn:aws:iam::{self.account}:role/cdk-{cdk_qualifier}-lookup-role-{self.account}-{self.region}",
+                ],
+            )
+        )
+
+        github_actions_role.add_to_policy(
+            iam.PolicyStatement(
+                sid="ReadStackOutputs",
+                actions=[
+                    "cloudformation:DescribeStacks",
+                    "cloudformation:DescribeStackEvents",
+                    "cloudformation:ListStackResources",
+                    "cloudformation:GetTemplate",
+                ],
+                resources=[
+                    f"arn:aws:cloudformation:{self.region}:{self.account}:stack/{self.stack_name}/*",
+                ],
+            )
+        )
+
+        github_actions_role.add_to_policy(
+            iam.PolicyStatement(
+                sid="RefreshDashboardViaSsm",
+                actions=["ssm:SendCommand"],
+                resources=[
+                    f"arn:aws:ec2:{self.region}:{self.account}:instance/{dashboard_instance.instance_id}",
+                    f"arn:aws:ssm:{self.region}::document/AWS-RunShellScript",
+                ],
+            )
+        )
+
+        github_actions_role.add_to_policy(
+            iam.PolicyStatement(
+                sid="ReadSsmCommandStatus",
+                actions=[
+                    "ssm:GetCommandInvocation",
+                    "ssm:ListCommandInvocations",
+                    "ssm:DescribeInstanceInformation",
+                ],
+                resources=["*"],
+            )
+        )
+
         CfnOutput(
             self,
             "GlobalPartnersDashboardUrl",
@@ -615,3 +711,10 @@ class GlobalPartnersStack(Stack):
             "GlobalPartnersDashboardInstanceId",
             value=dashboard_instance.instance_id,
         )
+        
+        CfnOutput(
+            self,
+            "GlobalPartnersGitHubActionsRoleArn",
+            value=github_actions_role.role_arn,
+        )
+

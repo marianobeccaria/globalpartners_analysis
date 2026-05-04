@@ -1,0 +1,144 @@
+name: Deploy GlobalPartners
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+  AWS_REGION: us-east-1
+  CDK_DEFAULT_ACCOUNT: ${{ vars.AWS_ACCOUNT_ID }}
+  CDK_DEFAULT_REGION: us-east-1
+
+  S3_BUCKET_NAME: mbeccaria-dea-globalpartners
+
+  GLUE_ROLE_NAME: globalpartners-glue-role
+  GLUE_DB_NAME: globalpartners_db
+  GLUE_WORKFLOW_NAME: globalpartners_daily_pipeline
+
+  INGESTION_JOB_NAME: globalpartners_ingestion_job
+  BRONZE_TO_SILVER_JOB_NAME: globalpartners_bronze_to_silver_job
+  SILVER_TO_GOLD_JOB_NAME: globalpartners_silver_to_gold_job
+  DISCOUNT_JOB_NAME: globalpartners_discount_effectiveness_job
+
+  LOG_RETENTION_DAYS: "30"
+  PIPELINE_SCHEDULE: "cron(0 2 * * ? *)"
+
+  DASHBOARD_INSTANCE_TYPE: t3.small
+  DASHBOARD_ALLOWED_CIDR: ${{ vars.DASHBOARD_ALLOWED_CIDR }}
+  DASHBOARD_PORT: "8501"
+
+  GITHUB_REPO: marianobeccaria/globalpartners_analysis
+  GITHUB_BRANCH: main
+  GITHUB_ACTIONS_ROLE_NAME: globalpartners-github-actions-role
+  CDK_QUALIFIER: hnb659fds
+
+jobs:
+  deploy:
+    name: Deploy CDK and refresh dashboard
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Validate required GitHub variables
+        run: |
+          test -n "$AWS_ACCOUNT_ID" || (echo "Missing GitHub variable AWS_ACCOUNT_ID" && exit 1)
+          test -n "$DASHBOARD_ALLOWED_CIDR" || (echo "Missing GitHub variable DASHBOARD_ALLOWED_CIDR" && exit 1)
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials with OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ env.AWS_ACCOUNT_ID }}:role/globalpartners-github-actions-role
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Show caller identity
+        run: aws sts get-caller-identity
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install AWS CDK
+        run: npm install -g aws-cdk
+
+      - name: Install CDK Python dependencies
+        working-directory: cdk
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: CDK synth
+        working-directory: cdk
+        run: cdk synth
+
+      - name: CDK deploy
+        working-directory: cdk
+        run: |
+          cdk deploy GlobalPartnersStack \
+            --require-approval never \
+            --outputs-file cdk-outputs.json
+
+      - name: Refresh Streamlit dashboard on EC2
+        working-directory: cdk
+        run: |
+          INSTANCE_ID=$(jq -r '.GlobalPartnersStack.GlobalPartnersDashboardInstanceId' cdk-outputs.json)
+          DASHBOARD_URL=$(jq -r '.GlobalPartnersStack.GlobalPartnersDashboardUrl' cdk-outputs.json)
+
+          if [ -z "$INSTANCE_ID" ] || [ "$INSTANCE_ID" = "null" ]; then
+            echo "Could not read GlobalPartnersDashboardInstanceId from CDK outputs"
+            cat cdk-outputs.json
+            exit 1
+          fi
+
+          echo "Refreshing dashboard on EC2 instance: $INSTANCE_ID"
+          echo "Dashboard URL: $DASHBOARD_URL"
+
+          cat > /tmp/dashboard-refresh-commands.json <<EOF
+          {
+            "commands": [
+              "set -euxo pipefail",
+              "aws s3 sync s3://${S3_BUCKET_NAME}/dashboard_app/ /opt/globalpartners/dashboard/ --delete",
+              "chown -R ec2-user:ec2-user /opt/globalpartners/dashboard",
+              "runuser -u ec2-user -- /opt/globalpartners/venv/bin/pip install -r /opt/globalpartners/dashboard/requirements.txt",
+              "systemctl restart globalpartners-dashboard",
+              "systemctl status globalpartners-dashboard --no-pager"
+            ]
+          }
+          EOF
+
+          COMMAND_ID=$(aws ssm send-command \
+            --instance-ids "$INSTANCE_ID" \
+            --document-name "AWS-RunShellScript" \
+            --comment "Refresh GlobalPartners Streamlit dashboard from GitHub Actions" \
+            --parameters file:///tmp/dashboard-refresh-commands.json \
+            --timeout-seconds 600 \
+            --query "Command.CommandId" \
+            --output text)
+
+          echo "SSM command id: $COMMAND_ID"
+
+          aws ssm wait command-executed \
+            --command-id "$COMMAND_ID" \
+            --instance-id "$INSTANCE_ID"
+
+          aws ssm get-command-invocation \
+            --command-id "$COMMAND_ID" \
+            --instance-id "$INSTANCE_ID" \
+            --query '{Status:Status,Stdout:StandardOutputContent,Stderr:StandardErrorContent}' \
+            --output json
+
+          echo "Dashboard refreshed: $DASHBOARD_URL"
