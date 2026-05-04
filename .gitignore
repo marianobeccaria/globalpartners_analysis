@@ -22,6 +22,10 @@ data/
 # CDK
 cdk.out/
 .cdk.staging/
+# CDK config/context files are source files
+!cdk/cdk.json
+!cdk/cdk.context.json
+
 
 # AWS / Credentials (NEVER commit these)
 .aws/
