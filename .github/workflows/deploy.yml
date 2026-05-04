@@ -53,6 +53,11 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Debug AWS role ARN
+        run: |
+          echo "AWS_ACCOUNT_ID length: ${#AWS_ACCOUNT_ID}"
+          echo "Role ARN: arn:aws:iam::${AWS_ACCOUNT_ID}:role/globalpartners-github-actions-role"
+
       - name: Configure AWS credentials with OIDC
         uses: aws-actions/configure-aws-credentials@v4
         with:
