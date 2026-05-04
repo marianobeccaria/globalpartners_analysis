@@ -14,12 +14,14 @@ Completed:
 - Four Glue jobs
 - Seven business metrics
 - Streamlit dashboard with seven pages
+- EC2 dashboard deployment
+- GitHub Actions CI/CD using AWS OIDC
+- Automated dashboard refresh on EC2 through SSM
 
 Remaining:
 
-- Deploy the Streamlit dashboard to EC2 as a persistent browser-accessible service
-- Add GitHub Actions CI/CD
-- Merge `dev` into `main` after final validation
+- Final documentation polish
+- SME review and assumption confirmation
 - Record the project walkthrough / presentation
 
 ## Architecture Summary
@@ -69,9 +71,14 @@ The Glue workflow runs the jobs in sequence:
 
 ```text
 .
+|-- .github/
+|   `-- workflows/
+|       `-- deploy.yml
 |-- cdk/
 |   |-- app.py
 |   |-- cdk/globalpartners_stack.py
+|   |-- cdk.json
+|   |-- cdk.context.json
 |   |-- .env.example
 |   `-- requirements.txt
 |-- dashboard/
@@ -107,6 +114,7 @@ Notes:
 - `data/` is ignored by git and should not be committed.
 - `.env` files are ignored by git and should not be committed.
 - CDK deploy uploads the Glue scripts from `glue_jobs/` to `s3://<bucket>/glue_scripts/`.
+- CDK deploy uploads the Streamlit dashboard from `dashboard/` to `s3://<bucket>/dashboard_app/`.
 
 ## Source Data
 
@@ -139,6 +147,11 @@ s3://<bucket>/
 |   |-- bronze_to_silver_job.py
 |   |-- silver_to_gold_job.py
 |   `-- discount_effectiveness_job.py
+|-- dashboard_app/
+|   |-- Home.py
+|   |-- pages/
+|   |-- utils/
+|   `-- requirements.txt
 |-- bronze/
 |   |-- order_items/ingestion_date=YYYY-MM-DD/
 |   |-- order_item_options/ingestion_date=YYYY-MM-DD/
@@ -210,6 +223,13 @@ BRONZE_TO_SILVER_JOB_NAME=globalpartners_bronze_to_silver_job
 SILVER_TO_GOLD_JOB_NAME=globalpartners_silver_to_gold_job
 DISCOUNT_JOB_NAME=globalpartners_discount_effectiveness_job
 PIPELINE_SCHEDULE=cron(0 2 * * ? *)
+DASHBOARD_INSTANCE_TYPE=t3.small
+DASHBOARD_ALLOWED_CIDR=0.0.0.0/0
+DASHBOARD_PORT=8501
+GITHUB_REPO=marianobeccaria/globalpartners_analysis
+GITHUB_BRANCH=main
+GITHUB_ACTIONS_ROLE_NAME=globalpartners-github-actions-role
+CDK_QUALIFIER=hnb659fds
 ```
 
 ## Deploy Infrastructure
@@ -226,9 +246,15 @@ cdk deploy
 - Glue IAM role and policies
 - S3 folder placeholders
 - Glue script uploads under `s3://<bucket>/glue_scripts/`
+- Dashboard app upload under `s3://<bucket>/dashboard_app/`
 - CloudWatch log groups
 - Four Glue jobs
 - Glue workflow and triggers
+- EC2 instance for the Streamlit dashboard
+- EC2 IAM role with read access to Gold and dashboard app S3 prefixes
+- EC2 security group for dashboard browser access
+- GitHub Actions OIDC role for CI/CD deployment
+- CloudFormation outputs for dashboard URL, EC2 instance ID, and GitHub role ARN
 
 ## Upload Source CSV Files
 
@@ -307,19 +333,116 @@ The dashboard reads the Gold Parquet tables from S3 using `dashboard/utils/data_
 
 ## EC2 Dashboard Deployment
 
-The dashboard currently runs locally. EC2 deployment is still pending.
+The Streamlit dashboard is deployed to EC2 through CDK.
 
-Recommended deployment target:
-
-- EC2 instance with Python 3.11
-- IAM role or AWS credentials with read access to the Gold S3 prefixes
-- Streamlit running as a `systemd` service
-- Security group allowing inbound access to the dashboard port from approved IP ranges
-
-After deployment, record the stakeholder URL here:
+Current dashboard URL:
 
 ```text
-Dashboard URL: TBD
+http://ec2-13-219-230-252.compute-1.amazonaws.com:8501
+```
+
+Deployment details:
+
+- Instance type: `t3.small`
+- OS: Amazon Linux 2023
+- Dashboard port: `8501`
+- Streamlit entrypoint: `Home.py`
+- Service manager: `systemd`
+- Service name: `globalpartners-dashboard`
+- App path on EC2: `/opt/globalpartners/dashboard`
+- Virtual environment: `/opt/globalpartners/venv`
+- Source app copy in S3: `s3://<bucket>/dashboard_app/`
+
+The EC2 instance uses an IAM role with:
+
+- S3 read access to `gold/*`
+- S3 read access to `dashboard_app/*`
+- SSM permissions through `AmazonSSMManagedInstanceCore`
+
+Dashboard access is controlled by:
+
+```text
+DASHBOARD_ALLOWED_CIDR
+```
+
+For public demo access, this can be temporarily set to:
+
+```text
+0.0.0.0/0
+```
+
+For restricted access, use a specific public IP:
+
+```text
+x.x.x.x/32
+```
+
+Connect to the EC2 instance with SSM:
+
+```bash
+aws ssm start-session --target <instance-id> --region us-east-1
+```
+
+Useful troubleshooting commands on EC2:
+
+```bash
+sudo systemctl status globalpartners-dashboard --no-pager
+sudo journalctl -u globalpartners-dashboard -n 100 --no-pager
+sudo tail -n 100 /var/log/cloud-init-output.log
+```
+
+## CI/CD Deployment
+
+GitHub Actions deploys the project from `main`.
+
+Workflow file:
+
+```text
+.github/workflows/deploy.yml
+```
+
+Trigger behavior:
+
+- Runs automatically on push to `main`
+- Can also be run manually with `workflow_dispatch`
+
+The workflow performs:
+
+1. Checks out the repository
+2. Assumes the AWS deploy role using GitHub OIDC
+3. Installs Python and CDK dependencies
+4. Runs `cdk synth`
+5. Runs `cdk deploy GlobalPartnersStack --require-approval never`
+6. Reads the EC2 instance ID from CDK outputs
+7. Sends an SSM command to EC2 to refresh the dashboard
+8. Restarts the `globalpartners-dashboard` service
+
+GitHub repository variables required:
+
+```text
+AWS_ACCOUNT_ID=858477419022
+DASHBOARD_ALLOWED_CIDR=0.0.0.0/0
+```
+
+The workflow uses AWS OIDC instead of long-lived AWS access keys.
+
+OIDC role:
+
+```text
+globalpartners-github-actions-role
+```
+
+The role trust policy is scoped to:
+
+```text
+repo:marianobeccaria/globalpartners_analysis:ref:refs/heads/main
+```
+
+Dashboard refresh command run by CI/CD:
+
+```bash
+aws s3 sync s3://<bucket>/dashboard_app/ /opt/globalpartners/dashboard/ --delete
+systemctl restart globalpartners-dashboard
 ```
 
 ## Validation Checklist
@@ -335,6 +458,12 @@ After CDK deploy and pipeline execution, validate:
 - Home caption shows the current dynamic restaurant count.
 - Restaurant Performance shows the expected locations after the Silver left join fix.
 - Discount Effectiveness loads `gold/discount_effectiveness` and shows promotional vs full-price order metrics.
+- EC2 dashboard URL opens in a browser.
+- Streamlit charts render without Plotly keyword warnings.
+- `globalpartners-dashboard` systemd service is active.
+- GitHub Actions deploy workflow completes successfully from `main`.
+- GitHub Actions refreshes the EC2 dashboard through SSM.
+- `cdk/cdk.json` and `cdk/cdk.context.json` are committed so GitHub Actions can synthesize the stack.
 
 ## SME Assumptions To Confirm
 
