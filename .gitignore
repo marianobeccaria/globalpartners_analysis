@@ -35,6 +35,7 @@ secrets.yaml
 .ipynb_checkpoints/
 .vscode/
 .claude
+.codex
 
 # OS
 .DS_Store
@@ -42,3 +43,6 @@ Thumbs.db
 
 # Conda
 *.conda
+
+# Local exploratory Testing
+src/testing
