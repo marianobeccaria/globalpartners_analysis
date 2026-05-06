@@ -39,10 +39,6 @@ if df_loyalty.empty:
 loyalty_row    = df_loyalty[df_loyalty["is_loyalty"] == True]
 non_loyalty_row = df_loyalty[df_loyalty["is_loyalty"] == False]
 
-print("=" * 110)
-print(f"\nLoyalty: \n{loyalty_row}\n")
-print(f"NonLoyalty: \n{non_loyalty_row}\n")
-
 # Extract scalar values safely
 def get_val(df_row, col, default=0):
     return df_row[col].values[0] if not df_row.empty else default
