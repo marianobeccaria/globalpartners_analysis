@@ -337,22 +337,51 @@ print(f"  Rows after date_dim join : {df_enriched.count():,}")
 
 
 # ══════════════════════════════════════════════════════════════
-# STEP 7 — COMPUTE gross_revenue
-# Revenue per line item = item revenue + aggregated option revenue
+# STEP 7 — COMPUTE gross_revenue AND BULK/CATERING FLAGS
+# Revenue per line item = item revenue + aggregated option revenue.
+# Bulk/catering-looking rows remain in CLV, but
+# are flagged separately for transparency and dashboard filtering.
 # ══════════════════════════════════════════════════════════════
-print("\n── STEP 7: Computing gross_revenue ──")
+print("\n── STEP 7: Computing gross_revenue and bulk/catering flags ──")
+
+bulk_item_price_threshold = 5000.0
+bulk_item_quantity_threshold = 100
 
 df_enriched = df_enriched.withColumn(
     "gross_revenue",
     (col("item_price") * col("item_quantity")) + col("option_revenue")
 )
 
+df_enriched = df_enriched \
+    .withColumn(
+        "is_bulk_order_candidate",
+        when(
+            (col("item_price") >= lit(bulk_item_price_threshold)) |
+            (col("item_quantity") >= lit(bulk_item_quantity_threshold)),
+            lit(True)
+        ).otherwise(lit(False))
+    ) \
+    .withColumn(
+        "bulk_flag_reason",
+        when(
+            (col("item_price") >= lit(bulk_item_price_threshold)) &
+            (col("item_quantity") >= lit(bulk_item_quantity_threshold)),
+            lit("high_item_price_and_quantity")
+        ).when(
+            col("item_price") >= lit(bulk_item_price_threshold),
+            lit("high_item_price")
+        ).when(
+            col("item_quantity") >= lit(bulk_item_quantity_threshold),
+            lit("high_item_quantity")
+        ).otherwise(lit(None).cast(StringType()))
+    )
+
 # Add year and month columns for Silver partitioning
 df_enriched = df_enriched \
     .withColumn("year",  year(col("order_date"))) \
     .withColumn("month", month(col("order_date")))
 
-# Quick sanity check on gross_revenue
+# Quick sanity check on gross_revenue and bulk/catering candidates
 revenue_stats = df_enriched.selectExpr(
     "min(gross_revenue) as min_revenue",
     "max(gross_revenue) as max_revenue",
@@ -360,12 +389,14 @@ revenue_stats = df_enriched.selectExpr(
     "sum(gross_revenue) as total_revenue",
 ).collect()[0]
 
+bulk_candidate_rows = df_enriched.filter(col("is_bulk_order_candidate")).count()
+
 print(f"  gross_revenue stats:")
 print(f"    Min   : ${revenue_stats['min_revenue']:,.4f}")
 print(f"    Max   : ${revenue_stats['max_revenue']:,.4f}")
 print(f"    Avg   : ${revenue_stats['avg_revenue']:,.4f}")
 print(f"    Total : ${revenue_stats['total_revenue']:,.2f}")
-
+print(f"  Bulk/catering candidate rows : {bulk_candidate_rows:,}")
 
 # ══════════════════════════════════════════════════════════════
 # STEP 8 — WRITE TO SILVER

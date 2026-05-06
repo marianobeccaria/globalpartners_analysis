@@ -145,6 +145,9 @@ df_daily = df.groupBy("user_id", "order_date", "is_loyalty") \
     .agg(
         _sum("gross_revenue").alias("daily_revenue"),
         countDistinct("order_id").alias("daily_orders"),
+        countDistinct(
+            when(col("is_bulk_order_candidate"), col("order_id"))
+        ).alias("daily_bulk_orders"),
     )
 
 # Step 1b: Define a window per customer ordered by date
@@ -169,6 +172,14 @@ df_clv = df_daily \
     .withColumn(
         "avg_order_value",
         _round(col("total_revenue_to_date") / col("orders_to_date"), 2)
+    ) \
+    .withColumn(
+        "bulk_orders_to_date",
+        _sum("daily_bulk_orders").over(clv_window).cast("integer")
+    ) \
+    .withColumn(
+        "has_bulk_order_candidate",
+        when(col("bulk_orders_to_date") > 0, lit(True)).otherwise(lit(False))
     ) \
     .withColumnRenamed("order_date", "snapshot_date")
 
@@ -208,6 +219,8 @@ df_clv_final = df_clv.select(
     "avg_order_value",
     "clv_tier",
     "is_loyalty",
+    "bulk_orders_to_date",
+    "has_bulk_order_candidate",
 )
 
 write_to_gold(df_clv_final, "customer_clv_daily")
