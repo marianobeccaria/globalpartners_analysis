@@ -105,7 +105,7 @@ with col_left:
         # Get each customer's final (most recent) CLV tier
         latest_clv = df_clv.sort_values("snapshot_date").groupby("user_id").last().reset_index()
         tier_counts = latest_clv["clv_tier"].value_counts()
-        #print(f"tier_counts:\n{tier_counts}")
+
         fig = go.Figure(go.Pie(
             labels=tier_counts.index,
             values=tier_counts.values,

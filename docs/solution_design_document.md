@@ -133,11 +133,11 @@ A full Exploratory Data Analysis was conducted prior to architecture design. All
 ### 5.1 Overview — AWS Medallion Architecture
 
 ```
-SQL Server (Production) / CSVs (Development)
+SQL Server/RDS via Glue JDBC (Production) / CSVs in S3 (Current Build)
         │
         ▼
 -------------------------------
-│  AWS Glue Python Shell      │  ingestion_job
+│  AWS Glue Spark Job         │  ingestion_job
 │  Trigger 1: Scheduled Daily │  
 -------------------------------
              │ Raw Parquet
@@ -215,9 +215,9 @@ All layers use **Parquet** format with **SSE-S3 encryption at rest**.
 
 ### 5.3 Glue Jobs Detail
 
-#### Job 1 — `ingestion_job` (Python Shell)
+#### Job 1 — `ingestion_job` (Glue Spark)
 
-- Connects to SQL Server via JDBC *(CSV upload to Bronze S3 for development phase)*
+- Supports two source modes: CSV files in S3 for the current build, or SQL Server/RDS through a Glue JDBC connection for production-style ingestion
 - Reads `order_items`, `order_item_options`, and `date_dim`
 - Writes raw Parquet files to Bronze, partitioned by `ingestion_date`
 - **No transformations** — Bronze is an exact copy of the source
@@ -311,9 +311,9 @@ This the main deliverable. Tracks how each customer's cumulative lifetime value 
 
 | Tool | Justification |
 |---|---|
-| **AWS Glue Python Shell** | Lightweight ingestion. No Spark cluster needed for simple JDBC reads. Cost-efficient for small jobs. |
-| **AWS Glue Spark** | PySpark required by client. Native AWS service. No new licenses. Scales automatically for 200K+ row transformations. |
+| **AWS Glue Spark** | PySpark required by client. Native AWS service. Used for ingestion and transformations so the pipeline can support both CSV and SQL Server/RDS JDBC sources. |
 | **AWS Glue Workflow** | Native orchestration within Glue. Avoids Step Functions. Trigger chaining provides built-in failure isolation. |
+| **Amazon RDS for SQL Server + Glue JDBC Connection** | Provides the target production source pattern requested by the SME while keeping the current CSV build available as the default source mode. |
 | **Amazon S3 + Parquet** | Cost-effective, durable object storage. Parquet is columnar - fast for PySpark aggregations. Partition pruning reduces scan costs. |
 | **Medallion Architecture** | Bronze preserves raw source fidelity. Silver enforces data quality. Gold serves business metrics cleanly. |
 | **CloudWatch** | Native AWS monitoring. Alarms on job failure ensure pipeline issues are caught immediately. |
@@ -324,7 +324,7 @@ This the main deliverable. Tracks how each customer's cumulative lifetime value 
 
 ## 8. Confirmed Assumptions
 
-The following assumptions were reviewed are reflected in the current pipeline implementation:
+The following assumptions were reviewed and are reflected in the current pipeline implementation:
 
 | # | Confirmed Assumption | Implementation |
 |---|---|---|
@@ -339,7 +339,7 @@ The following assumptions were reviewed are reflected in the current pipeline im
 
 ## 9. Remaining Follow-Up
 
-The current build uses CSV files uploaded to S3 as the source dataset. The target production architecture remains:
+The default build uses CSV files uploaded to S3 as the source dataset. CDK now includes optional SQL Server/RDS and Glue JDBC infrastructure for the target production architecture:
 
 ```
 SQL Server / RDS -> Glue JDBC Connection -> S3 Bronze -> Silver -> Gold -> Streamlit Dashboard
@@ -348,7 +348,7 @@ SQL Server / RDS -> Glue JDBC Connection -> S3 Bronze -> Silver -> Gold -> Strea
 Remaining follow-up items:
 
 - Update the Draw.io architecture diagram to show the SQL Server/RDS to Glue JDBC target flow and the current CSV-to-S3 development source path.
-- Implement SQL Server/RDS JDBC ingestion if production connectivity is required for final deployment.
+- Load the source CSV data into the SQL Server/RDS tables before running the pipeline in `SOURCE_MODE=jdbc`.
 - Replace proxy promotional logic with actual discount, coupon, promotion, cost, or margin data if those sources become available.
 - Expand holiday enrichment beyond 2023 if a complete 2020–2024 holiday calendar is provided.
 

@@ -15,6 +15,7 @@
 import sys
 from datetime import date, timedelta
 
+import boto3
 from awsglue.context import GlueContext
 from awsglue.job import Job
 from awsglue.utils import getResolvedOptions
@@ -75,19 +76,44 @@ print(f"Bronze source  : {BRONZE_BASE}")
 print(f"Silver output  : {SILVER_BASE}")
 print(f"{'='*60}")
 
+def latest_bronze_partition_path(table_name):
+    '''
+    Picks latest partition Bronze table to avoid failure from mixed Bronze Parquet schemas
+    ingestion_date=<latest>
+    '''
+    s3 = boto3.client("s3")
+    prefix = f"{bronze_prefix}/{table_name}/"
+    paginator = s3.get_paginator("list_objects_v2")
+
+    partition_values = []
+    for page in paginator.paginate(Bucket=bucket, Prefix=prefix, Delimiter="/"):
+        for common_prefix in page.get("CommonPrefixes", []):
+            partition_prefix = common_prefix["Prefix"].rstrip("/")
+            partition_name = partition_prefix.split("/")[-1]
+            if partition_name.startswith("ingestion_date="):
+                partition_values.append(partition_name.split("=", 1)[1])
+
+    if not partition_values:
+        raise ValueError(f"No Bronze ingestion_date partitions found for {table_name}")
+
+    latest_date = max(partition_values)
+    latest_path = f"{BRONZE_BASE}/{table_name}/ingestion_date={latest_date}"
+    print(f"  Latest Bronze partition for {table_name}: ingestion_date={latest_date}")
+    return latest_path
+
 
 # ══════════════════════════════════════════════════════════════
 # STEP 1 — READ BRONZE TABLES
 # Read the latest partition from each Bronze table.
-# Bronze uses ingestion_date partitioning so we read the full
-# table — Spark will scan all partitions automatically.
+# Bronze uses ingestion_date partitioning. Reading only the latest
+# partition avoids mixing schemas from earlier ingestion implementations.
 # ══════════════════════════════════════════════════════════════
 print("\n── STEP 1: Reading Bronze tables ──")
 
 # STEP 1 — READ BRONZE TABLES
-df_items   = spark.read.parquet(f"{BRONZE_BASE}/order_items/")
-df_options = spark.read.parquet(f"{BRONZE_BASE}/order_item_options/")
-df_date    = spark.read.parquet(f"{BRONZE_BASE}/date_dim/")
+df_items   = spark.read.parquet(latest_bronze_partition_path("order_items"))
+df_options = spark.read.parquet(latest_bronze_partition_path("order_item_options"))
+df_date    = spark.read.parquet(latest_bronze_partition_path("date_dim"))
 
 # Drop ingestion_date partition column that was added by the ingestion job
 # for Bronze partitioning only and is not needed in Silver or Gold.

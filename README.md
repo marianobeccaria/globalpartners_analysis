@@ -1,8 +1,8 @@
 # GlobalPartners Business Insights Pipeline
 
-End-to-end analytics project for GlobalPartners restaurant order data. The project ingests source CSV files, builds Bronze/Silver/Gold datasets in S3 with AWS Glue, and serves seven business metric pages through a Streamlit dashboard.
+End-to-end analytics project for GlobalPartners restaurant order data. The project ingests source data, builds Bronze/Silver/Gold datasets in S3 with AWS Glue, and serves seven business metric pages through a Streamlit dashboard.
 
-The current build uses local CSV files as the source dataset. The intended production pattern is the same pipeline with SQL Server as the upstream source.
+The default build uses CSV files uploaded to S3 as the source dataset. The production ingestion path can be enabled with SQL Server on RDS, a Glue JDBC connection, and `SOURCE_MODE=jdbc`.
 
 ## Project Status
 
@@ -11,6 +11,7 @@ Completed:
 - Exploratory data analysis
 - Architecture design
 - AWS CDK infrastructure
+- Optional SQL Server RDS and Glue JDBC connection infrastructure
 - Four Glue jobs
 - Seven business metrics
 - Streamlit dashboard with seven pages
@@ -170,7 +171,7 @@ s3://<bucket>/
 
 | Job | Script | Runtime | Purpose | Output |
 | --- | --- | --- | --- | --- |
-| Ingestion | `glue_jobs/ingestion_job.py` | Python Shell | Read source CSVs from S3 and write raw Parquet to Bronze | `bronze/order_items`, `bronze/order_item_options`, `bronze/date_dim` |
+| Ingestion | `glue_jobs/ingestion_job.py` | Glue Spark | Read source data from S3 CSVs or SQL Server JDBC and write raw Parquet to Bronze | `bronze/order_items`, `bronze/order_item_options`, `bronze/date_dim` |
 | Bronze to Silver | `glue_jobs/bronze_to_silver_job.py` | Glue Spark | Clean, deduplicate, generate full date dimension, preserve optionless items, compute gross revenue | `silver/orders_enriched` |
 | Silver to Gold | `glue_jobs/silver_to_gold_job.py` | Glue Spark | Build six core business metric tables | Six Gold metric tables |
 | Discount Effectiveness | `glue_jobs/discount_effectiveness_job.py` | Glue Spark | Infer promotional orders from zero-price and below-category-price signals | `gold/discount_effectiveness` |
@@ -226,6 +227,31 @@ GITHUB_REPO=marianobeccaria/globalpartners_analysis
 GITHUB_BRANCH=main
 GITHUB_ACTIONS_ROLE_NAME=globalpartners-github-actions-role
 CDK_QUALIFIER=hnb659fds
+SOURCE_MODE=csv
+ENABLE_RDS_SOURCE=false
+GLUE_JDBC_CONNECTION_NAME=globalpartners-sqlserver-jdbc
+JDBC_TABLES=order_items,order_item_options,date_dim
+```
+
+For the current CSV build, leave:
+
+```text
+SOURCE_MODE=csv
+ENABLE_RDS_SOURCE=false
+```
+
+To provision SQL Server RDS and the Glue JDBC connection for production-style ingestion, set:
+
+```text
+SOURCE_MODE=jdbc
+ENABLE_RDS_SOURCE=true
+SQLSERVER_INSTANCE_ID=globalpartners-sqlserver
+SQLSERVER_INSTANCE_TYPE=t3.small
+SQLSERVER_ALLOCATED_STORAGE=20
+SQLSERVER_DB=globalpartners
+SQLSERVER_USER=globalpartners_admin
+GLUE_JDBC_CONNECTION_NAME=globalpartners-sqlserver-jdbc
+JDBC_TABLES=order_items,order_item_options,date_dim
 ```
 
 ## Deploy Infrastructure
@@ -240,6 +266,7 @@ cdk deploy
 `cdk deploy` creates/updates:
 
 - Glue IAM role and policies
+- Optional SQL Server RDS instance, security groups, generated database secret, and Glue JDBC connection when `ENABLE_RDS_SOURCE=true`
 - S3 folder placeholders
 - Glue script uploads under `s3://<bucket>/glue_scripts/`
 - Dashboard app upload under `s3://<bucket>/dashboard_app/`
