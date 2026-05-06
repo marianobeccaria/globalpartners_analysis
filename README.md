@@ -27,37 +27,33 @@ Remaining:
 ## Architecture Summary
 
 ```text
-Source data
-  CSV files for current build
-  SQL Server for intended production source
+SQL Server / RDS
         |
         v
-Glue Job 1: ingestion_job.py
+AWS Glue JDBC Connection
         |
         v
-S3 Bronze Layer
-  Raw Parquet, partitioned by ingestion_date
+Glue ingestion_job.py
         |
         v
-Glue Job 2: bronze_to_silver_job.py
+S3 Bronze
         |
         v
-S3 Silver Layer
-  orders_enriched, partitioned by year/month
+Glue bronze_to_silver_job.py
         |
-        +-------------------------------+
-        |                               |
-        v                               v
-Glue Job 3: silver_to_gold_job.py   Glue Job 4: discount_effectiveness_job.py
-        |                               |
-        v                               v
-S3 Gold Layer                       S3 Gold Layer
-  6 core metric tables                discount_effectiveness
-        |                               |
-        +---------------+---------------+
-                        |
-                        v
-              Streamlit Dashboard
+        v
+S3 Silver: orders_enriched
+        |
+        +----------------------------+
+        |                            |
+        v                            v
+Glue silver_to_gold_job.py     Glue discount_effectiveness_job.py
+        |                            |
+        v                            v
+S3 Gold business tables        S3 Gold discount_effectiveness
+        |
+        v
+Streamlit Dashboard on EC2
 ```
 
 The Glue workflow runs the jobs in sequence:
@@ -475,6 +471,15 @@ These decisions are implemented or partially implemented and should be confirmed
 - Preserve order items that do not have modifiers/options.
 - Decide whether very large bulk/catering-style orders should be included in CLV or handled separately.
 - Confirm whether holiday enrichment should be expanded beyond the 2023 holidays provided in the source file.
+
+## SME Confirmed Assumptions
+
+- Generated date dimension
+- Non-2023 holidays treated as false
+- Proxy discount logic
+- No profitability calculation due to missing cost data
+- Bulk/catering orders included but flagged
+- CSV ingestion is current build; SQL Server/RDS JDBC is target production design
 
 ## Security And Data Notes
 
