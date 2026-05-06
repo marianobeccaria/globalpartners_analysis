@@ -24,32 +24,22 @@ st.set_page_config(
     layout="wide",
 )
 
-st.title("🏷️ Pricing & Discount Effectiveness")
+st.title("🏷️ Proxy Promotional Effectiveness")
 st.caption(
-    "No explicit discount codes were found in the dataset. "
-    "This analysis uses two proxy signals to identify promotional pricing: "
-    "zero-price items (free giveaways) and items priced below their category average. "
-    "Use this page to understand where promotional pricing occurs and its revenue impact."
+    "The source files do not include discount codes, coupon IDs, cost, or margin data. "
+    "This page estimates promotional activity using available pricing signals: "
+    "zero-price items and items priced unusually below their category average. "
+    "Results should be interpreted as revenue impact estimates, not confirmed profitability."
 )
+st.info(
+    "Assumption: use available-data proxy signals for promotional analysis. "
+    "Profitability is out of scope until cost or margin data is provided."
+)
+
 st.divider()
 
 # ── Load data ──────────────────────────────────────────────────────────────────
 df = load_discount()
-
-# Debugging to view what's being presented to streamlit
-
-print("=" * 110)
-# with pd.option_context(
-#     "display.max_columns", None,
-#     "display.width", 2000,
-#     "display.max_colwidth", None,
-# ):
-#     print("=" * 110)
-#     print("\nDiscounts sample:")
-#     print(df.head(20).to_string(index=False))
-
-print(df.head(20).T.to_string())
-# print(f"\nDiscounts: \n{df.head(20)}\n")
 
 if df.empty:
     st.error("No discount data available. Please run the pipeline first.")
@@ -139,32 +129,24 @@ with col1:
     st.metric("Total Orders", f"{total_orders:,}")
 with col2:
     st.metric(
-        "Promotional Orders",
+        "Proxy Promo Orders",
         f"{promo_orders:,}",
         delta=f"{promo_pct:.1f}% of total",
         delta_color="off",
     )
 with col3:
     st.metric(
-        "Estimated Discount Total",
+        "Estimated Promo Value",
         f"${total_discount:,.2f}",
-        help="Sum of estimated discount value across all promotional orders."
+        help="Estimated revenue value from proxy promotional signals, not confirmed discount or profit impact."
     )
-# with col4:
-#     st.metric(
-#         "Promo vs Full-Price Basket",
-#         f"{basket_lift:+.1f}%",
-#         delta="promotional basket vs full-price",
-#         delta_color="normal" if basket_lift >= 0 else "inverse",
-#         help="Are promotional orders generating larger baskets than full-price orders?"
-#     )
 
 with col4:
     st.metric(
-        "Promo vs Full-Price Basket",
+        "Proxy Promo vs Full-Price Basket",
         f"{basket_lift:+.1f}%" if basket_lift is not None else "N/A",
         delta=(
-            "promotional basket vs full-price"
+            "proxy promotional basket vs full-price"
             if basket_lift is not None
             else "requires both order types"
         ),
@@ -173,9 +155,8 @@ with col4:
             if basket_lift is not None and basket_lift >= 0
             else "inverse"
         ),
-        help="Are promotional orders generating larger baskets than full-price orders?"
+        help="Compares average gross revenue per order. This does not measure margin or profitability."
     )
-
 
 st.divider()
 
@@ -184,7 +165,7 @@ col_left, col_right = st.columns(2)
 
 with col_left:
     st.subheader("Order Type Breakdown")
-    st.caption("Distribution of full-price vs promotional order types.")
+    st.caption("Distribution of full-price vs proxy promotional order types.")
 
     type_counts = df_filtered["order_type"].value_counts().reset_index()
     type_counts.columns = ["Order Type", "Count"]
@@ -212,7 +193,7 @@ with col_left:
 
 with col_right:
     st.subheader("Promotional Order Rate Over Time")
-    st.caption("Monthly % of orders flagged as promotional.")
+    st.caption("Monthly % of orders flagged by proxy promotional signals.")
 
     df_filtered["month_start"] = df_filtered["order_date"].dt.to_period("M").dt.to_timestamp()
     monthly = df_filtered.groupby("month_start").agg(
@@ -279,30 +260,6 @@ with col_box:
         showlegend=False,
     )
     st.plotly_chart(fig_box, use_container_width=True)
-
-# with col_bar:
-#     # Avg basket by order type
-#     avg_basket = df_plot.groupby("Order Type")["gross_revenue"].mean().reset_index()
-#     avg_basket.columns = ["Order Type", "Avg Basket ($)"]
-
-#     fig_avg = go.Figure(go.Bar(
-#         x=avg_basket["Order Type"],
-#         y=avg_basket["Avg Basket ($)"],
-#         marker_color=["#f39c12", "#2ecc71"],
-#         text=[f"${v:,.2f}" for v in avg_basket["Avg Basket ($)"]],
-#         textposition="outside",
-#         width=0.4,
-#     ))
-#     fig_avg.update_layout(
-#         height=320,
-#         margin=dict(t=10, b=10, l=10, r=10),
-#         xaxis_title="",
-#         yaxis_title="Avg Order Revenue ($)",
-#         yaxis_tickprefix="$",
-#         yaxis_tickformat=",.0f",
-#         showlegend=False,
-#     )
-#     st.plotly_chart(fig_avg, use_container_width=True)
 
 with col_bar:
     # Avg basket by order type
@@ -442,7 +399,7 @@ with col_loy:
 st.divider()
 
 # ── Row 4: Estimated Discount Detail Table ─────────────────────────────────────
-st.subheader("📋 Promotional Order Detail")
+st.subheader("📋 Proxy Promotional Order Detail")
 st.caption(
     "Top promotional orders ranked by estimated discount value. "
     "Useful for identifying patterns in high-discount orders."
@@ -459,14 +416,15 @@ promo_table = df_filtered[df_filtered["is_promotional_order"] == True] \
 promo_table.columns = [
     "Order ID", "Date", "Restaurant", "Loyalty Member",
     "Gross Revenue", "Order Type", "Free Items",
-    "Below-Avg Items", "Est. Discount ($)",
+    "Below-Avg Items", "Est. Promo Value ($)",
 ]
 
 promo_table["Order ID"]      = promo_table["Order ID"].astype(str).str[:12] + "..."
 #promo_table["Restaurant"]    = "Loc-" + promo_table["Restaurant"].astype(str).str[:6]
 promo_table["Restaurant"] = promo_table["Restaurant"].map(restaurant_labels)
 promo_table["Gross Revenue"] = promo_table["Gross Revenue"].apply(lambda x: f"${x:,.2f}")
-promo_table["Est. Discount ($)"] = promo_table["Est. Discount ($)"].apply(lambda x: f"${x:,.2f}")
+promo_table["Est. Promo Value ($)"] = promo_table["Est. Promo Value ($)"].apply(lambda x: f"${x:,.2f}")
+
 
 st.dataframe(promo_table, width='stretch', hide_index=True)
 st.caption(f"Showing top 50 of {df_filtered['is_promotional_order'].sum():,} promotional orders.")
@@ -474,23 +432,29 @@ st.caption(f"Showing top 50 of {df_filtered['is_promotional_order'].sum():,} pro
 st.divider()
 
 # ── Methodology Note ───────────────────────────────────────────────────────────
-with st.expander("ℹ️ Methodology — How promotional orders are identified"):
+with st.expander("ℹ️ Methodology — How proxy promotional orders are identified"):
     st.markdown("""
-    Since no explicit discount codes exist in this dataset, two proxy signals are used:
+    The provided data does not include explicit discount codes, coupon IDs, promotion tables,
+    product cost, or margin fields. Because of that, this dashboard estimates promotional
+    activity using two SME-approved proxy signals.
 
-    **Signal 1 — Free Items (Option 1)**
-    Orders containing at least one item with `item_price = $0.00` are flagged as
-    promotional. The estimated discount is calculated as the category average price
-    multiplied by the quantity — representing the revenue foregone by giving the item free.
+    **Signal 1 — Free Items**
 
-    **Signal 2 — Below-Average Price Items (Option 2)**
-    Items priced more than one standard deviation below their category average price
-    are flagged as potentially promotional. The estimated discount is the price gap
-    multiplied by quantity ordered.
+    Orders containing at least one item with `item_price = $0.00` are flagged as proxy
+    promotional orders. Estimated promotional value is calculated as the category average
+    price multiplied by quantity.
+
+    **Signal 2 — Below-Average Price Items**
+
+    Items priced more than one standard deviation below their category average are flagged
+    as potential promotional pricing. Estimated promotional value is calculated as the
+    gap between category average price and actual item price, multiplied by quantity.
 
     **Limitations**
-    - These are proxy signals, not confirmed discounts
-    - Zero-price items may represent data entry errors rather than intentional promotions
-    - Below-average pricing may reflect legitimate lower-tier menu items, not discounts
-    - Results should be validated against POS system promotional records when available
+
+    - These are inferred proxy signals, not confirmed discounts.
+    - Profitability cannot be calculated because cost and margin data are not available.
+    - Zero-price items may represent giveaways, comps, or data-entry issues.
+    - Below-average pricing may represent normal lower-priced menu items.
+    - Results should be validated against POS promotion, coupon, or campaign tables if those become available.
     """)
