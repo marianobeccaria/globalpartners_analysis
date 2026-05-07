@@ -394,7 +394,11 @@ The Streamlit dashboard is deployed to EC2 through CDK.
 Current dashboard URL:
 
 ```text
-http://ec2-13-219-230-252.compute-1.amazonaws.com:8501
+http://ec2-98-92-167-44.compute-1.amazonaws.com:8501
+```
+
+```markdown
+Note: this URL can change if the EC2 instance is replaced. Use the `GlobalPartnersDashboardUrl` CloudFormation output for the current value.
 ```
 
 Deployment details:
