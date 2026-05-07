@@ -2,7 +2,7 @@
 
 End-to-end analytics project for GlobalPartners restaurant order data. The project ingests source data, builds Bronze/Silver/Gold datasets in S3 with AWS Glue, and serves seven business metric pages through a Streamlit dashboard.
 
-The default build uses CSV files uploaded to S3 as the source dataset. The production ingestion path can be enabled with SQL Server on RDS, a Glue JDBC connection, and `SOURCE_MODE=jdbc`.
+The default development build uses CSV files uploaded to S3 as the source dataset. The production-style ingestion path uses SQL Server on RDS, a Glue JDBC connection, and `SOURCE_MODE=jdbc`; this RDS/JDBC path has been deployed and validated end to end.
 
 ## Project Status
 
@@ -12,6 +12,7 @@ Completed:
 - Architecture design
 - AWS CDK infrastructure
 - Optional SQL Server RDS and Glue JDBC connection infrastructure
+- One-time SQL Server loader and query utility Glue jobs
 - Four Glue jobs
 - Seven business metrics
 - Streamlit dashboard with seven pages
@@ -19,10 +20,10 @@ Completed:
 - GitHub Actions CI/CD using AWS OIDC
 - Automated dashboard refresh on EC2 through SSM
 
+- RDS/JDBC pipeline validation
+
 Remaining:
 
-- Final documentation polish
-- SME review and assumption confirmation
 - Record the project walkthrough / presentation
 
 ## Architecture Summary
@@ -94,7 +95,9 @@ The Glue workflow runs the jobs in sequence:
 |   |-- ingestion_job.py
 |   |-- bronze_to_silver_job.py
 |   |-- silver_to_gold_job.py
-|   `-- discount_effectiveness_job.py
+|   |-- discount_effectiveness_job.py
+|   |-- load_sqlserver_from_s3_job.py
+|   `-- query_sqlserver_job.py
 |-- docs/
 |   |-- globalpartners_architecture.png
 |   `-- solution_design_document.md
@@ -175,6 +178,8 @@ s3://<bucket>/
 | Bronze to Silver | `glue_jobs/bronze_to_silver_job.py` | Glue Spark | Clean, deduplicate, generate full date dimension, preserve optionless items, compute gross revenue | `silver/orders_enriched` |
 | Silver to Gold | `glue_jobs/silver_to_gold_job.py` | Glue Spark | Build six core business metric tables | Six Gold metric tables |
 | Discount Effectiveness | `glue_jobs/discount_effectiveness_job.py` | Glue Spark | Infer promotional orders from zero-price and below-category-price signals | `gold/discount_effectiveness` |
+| SQL Server Loader | `glue_jobs/load_sqlserver_from_s3_job.py` | Glue Spark | One-time utility to load S3 source CSVs into SQL Server/RDS tables | `dbo.order_items`, `dbo.order_item_options`, `dbo.date_dim` |
+| SQL Server Query Utility | `glue_jobs/query_sqlserver_job.py` | Glue Spark | Read-only utility to inspect SQL Server/RDS through Glue JDBC and CloudWatch logs | CloudWatch output |
 
 ## Gold Tables
 
@@ -291,6 +296,30 @@ aws s3 cp data/date_dim.csv s3://<bucket>/source/date_dim.csv
 
 Replace `<bucket>` with the value from `S3_BUCKET_NAME`.
 
+## Initialize SQL Server/RDS Source
+
+When running in production-style JDBC mode, initialize SQL Server/RDS before starting the main workflow:
+
+```text
+S3 source CSVs -> load_sqlserver_from_s3_job.py -> SQL Server/RDS source tables
+```
+
+The one-time loader writes:
+
+```text
+dbo.order_items
+dbo.order_item_options
+dbo.date_dim
+```
+
+The RDS/JDBC flow was validated with:
+
+```text
+S3 CSVs -> one-time SQL Server loader -> SQL Server/RDS -> Glue JDBC ingestion -> Bronze -> Silver -> Gold -> Streamlit
+```
+
+`query_sqlserver_job.py` can be used to run read-only SQL Server inspection queries through Glue JDBC. Its default query lists base tables and prints results to CloudWatch Logs.
+
 ## Run the Glue Pipeline
 
 Start the workflow manually:
@@ -321,6 +350,8 @@ done
 ```
 
 Expected result: all four jobs should finish with `SUCCEEDED`.
+
+Validated result: all four jobs completed successfully in `SOURCE_MODE=jdbc` after the SQL Server/RDS tables were loaded.
 
 ## Run the Dashboard Locally
 
@@ -482,22 +513,13 @@ After CDK deploy and pipeline execution, validate:
 - Restaurant Performance shows the expected locations after the Silver left join fix.
 - Discount Effectiveness loads `gold/discount_effectiveness` and shows promotional vs full-price order metrics.
 - EC2 dashboard URL opens in a browser.
+- SQL Server/RDS source tables can be listed with `query_sqlserver_job.py`.
+- Main Glue workflow succeeds in `SOURCE_MODE=jdbc`.
 - Streamlit charts render without Plotly keyword warnings.
 - `globalpartners-dashboard` systemd service is active.
 - GitHub Actions deploy workflow completes successfully from `main`.
 - GitHub Actions refreshes the EC2 dashboard through SSM.
 - `cdk/cdk.json` and `cdk/cdk.context.json` are committed so GitHub Actions can synthesize the stack.
-
-## SME Assumptions To Confirm
-
-These decisions are implemented or partially implemented and should be confirmed with the SME:
-
-- Generate a full date dimension for 2020-2024 because the provided `date_dim.csv` only covers 2023.
-- Treat `Alltown Fresh - DEVELOPMENT` as test data and exclude it from Silver.
-- Use inferred discount signals because explicit discount fields/tables were not provided.
-- Preserve order items that do not have modifiers/options.
-- Decide whether very large bulk/catering-style orders should be included in CLV or handled separately.
-- Confirm whether holiday enrichment should be expanded beyond the 2023 holidays provided in the source file.
 
 ## SME Confirmed Assumptions
 
@@ -506,7 +528,7 @@ These decisions are implemented or partially implemented and should be confirmed
 - Proxy discount logic
 - No profitability calculation due to missing cost data
 - Bulk/catering orders included but flagged
-- CSV ingestion is current build; SQL Server/RDS JDBC is target production design
+- CSV ingestion remains available for development; SQL Server/RDS JDBC ingestion is deployed and validated
 
 ## Security And Data Notes
 

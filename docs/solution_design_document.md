@@ -1,6 +1,6 @@
 # GlobalPartners — Solution Design Document
 
-> **Version:** 1.1 | **Status:** Updated with SME Feedback | **Architecture:** AWS Medallion (Bronze / Silver / Gold)
+> **Version:** 1.2 | **Status:** RDS/JDBC Pipeline Validated | **Architecture:** AWS Medallion (Bronze / Silver / Gold)
 > 
 > **Prepared by:** Data Engineering Team | **Primary Goal:** Customer Lifetime Value (CLV) — Daily
 
@@ -16,7 +16,7 @@
 6. [Gold Layer Data Model](#6-gold-layer-data-model)
 7. [Technology Stack — Why Each Tool Was Chosen](#7-technology-stack--why-each-tool-was-chosen)
 8. [SME Confirmed Assumptions](#8-sme-confirmed-assumptions)
-9. [Remaining Follow-Up](#9-remaining-follow-up)
+9. [Validation And Remaining Follow-Up](#9-validation-and-remaining-follow-up)
 
 ---
 
@@ -26,7 +26,7 @@ GlobalPartners requires a unified data platform to analyze customer behavior, sp
 
 The **primary deliverable** is a daily-updated Customer Lifetime Value (CLV) model that tracks how each customer's value evolves over time. **Secondary deliverables** include RFM (Recency, Frequency, Monetary) segmentation, churn indicators, sales trend monitoring, loyalty program analysis, location performance ranking, and discount effectiveness. Results will be displayed an interactive Streamlit dashboard.
 
-The entire pipeline runs on AWS using PySpark for all transformation logic, following a Medallion Architecture (Bronze -> Silver -> Gold) orchestrated by AWS Glue Workflow with chained Triggers.
+The entire pipeline runs on AWS using PySpark for all transformation logic, following a Medallion Architecture (Bronze -> Silver -> Gold) orchestrated by AWS Glue Workflow with chained Triggers. The production-style source path has been validated using SQL Server on RDS, a Glue JDBC connection, and a one-time S3-to-SQL-Server loader.
 
 ---
 
@@ -52,7 +52,7 @@ The entire pipeline runs on AWS using PySpark for all transformation logic, foll
 |---|---|
 | Cloud Platform | AWS only — no Snowflake, DBT, or external tool licenses |
 | Transformation Engine | All logic implemented in PySpark |
-| Data Source | SQL Server via JDBC (CSVs used for current development phase) |
+| Data Source | SQL Server/RDS via Glue JDBC for production-style ingestion; S3 CSVs remain available for development and source initialization |
 | Orchestration | AWS Glue Workflow with Triggers — no Step Functions |
 | Scheduling | Daily pipeline run at 2:00 AM UTC |
 | Encryption | SSE-S3 at rest, TLS in transit |
@@ -252,6 +252,21 @@ All layers use **Parquet** format with **SSE-S3 encryption at rest**.
 - Flags orders with zero-price items and items priced more than one standard deviation below their category average
 - Reports estimated revenue impact only; profitability is not calculated
 
+#### Utility Job — `load_sqlserver_from_s3_job` (Glue Spark)
+
+- One-time initialization job used before running the main workflow in `SOURCE_MODE=jdbc`
+- Reads the three source CSV files from S3
+- Creates the configured SQL Server database if it does not already exist
+- Writes `dbo.order_items`, `dbo.order_item_options`, and `dbo.date_dim`
+- Keeps the production-style path reproducible from the provided project files
+
+#### Utility Job — `query_sqlserver_job` (Glue Spark)
+
+- Read-only SQL Server/RDS inspection job
+- Uses the Glue JDBC connection and Secrets Manager credential
+- Defaults to listing SQL Server base tables
+- Prints query results to CloudWatch Logs so no local SQL client, SSH tunnel, or direct RDS access is required
+
 ### 5.4 Orchestration — Glue Workflow
 
 | Trigger | Condition | Action |
@@ -313,7 +328,7 @@ This the main deliverable. Tracks how each customer's cumulative lifetime value 
 |---|---|
 | **AWS Glue Spark** | PySpark required by client. Native AWS service. Used for ingestion and transformations so the pipeline can support both CSV and SQL Server/RDS JDBC sources. |
 | **AWS Glue Workflow** | Native orchestration within Glue. Avoids Step Functions. Trigger chaining provides built-in failure isolation. |
-| **Amazon RDS for SQL Server + Glue JDBC Connection** | Provides the target production source pattern requested by the SME while keeping the current CSV build available as the default source mode. |
+| **Amazon RDS for SQL Server + Glue JDBC Connection** | Provides the target production source pattern requested by the SME. The path was validated end to end after loading the provided CSV source files into SQL Server/RDS. |
 | **Amazon S3 + Parquet** | Cost-effective, durable object storage. Parquet is columnar - fast for PySpark aggregations. Partition pruning reduces scan costs. |
 | **Medallion Architecture** | Bronze preserves raw source fidelity. Silver enforces data quality. Gold serves business metrics cleanly. |
 | **CloudWatch** | Native AWS monitoring. Alarms on job failure ensure pipeline issues are caught immediately. |
@@ -337,20 +352,28 @@ The following assumptions were reviewed and are reflected in the current pipelin
 
 ---
 
-## 9. Remaining Follow-Up
+## 9. Validation And Remaining Follow-Up
 
-The default build uses CSV files uploaded to S3 as the source dataset. CDK now includes optional SQL Server/RDS and Glue JDBC infrastructure for the target production architecture:
+The default development build can still use CSV files uploaded to S3 as the source dataset. The production-style path has also been deployed and validated:
 
 ```
-SQL Server / RDS -> Glue JDBC Connection -> S3 Bronze -> Silver -> Gold -> Streamlit Dashboard
+S3 CSVs -> one-time SQL Server loader -> SQL Server/RDS -> Glue JDBC ingestion -> S3 Bronze -> Silver -> Gold -> Streamlit Dashboard
 ```
+
+Validation completed:
+
+- CDK deployed SQL Server/RDS, security groups, VPC endpoints, Secrets Manager credential, and Glue JDBC connection.
+- `load_sqlserver_from_s3_job.py` loaded `dbo.order_items`, `dbo.order_item_options`, and `dbo.date_dim` into SQL Server/RDS.
+- `query_sqlserver_job.py` validated SQL Server table access through Glue JDBC.
+- `globalpartners_daily_pipeline` completed successfully in `SOURCE_MODE=jdbc`.
+- Dashboard smoke testing was completed after the JDBC-backed Gold refresh.
 
 Remaining follow-up items:
 
 - Update the Draw.io architecture diagram to show the SQL Server/RDS to Glue JDBC target flow and the current CSV-to-S3 development source path.
-- Load the source CSV data into the SQL Server/RDS tables before running the pipeline in `SOURCE_MODE=jdbc`.
 - Replace proxy promotional logic with actual discount, coupon, promotion, cost, or margin data if those sources become available.
 - Expand holiday enrichment beyond 2023 if a complete 2020–2024 holiday calendar is provided.
+- Optionally build a one-time Bronze normalization job if historical multi-partition Bronze reads are needed across older Parquet files written by different ingestion implementations.
 
 ---
 
@@ -361,4 +384,4 @@ Remaining follow-up items:
 
 ---
 
-*GlobalPartners Solution Design Document v1.1 — Confidential — For SME Review*
+*GlobalPartners Solution Design Document v1.2 — Confidential — For SME Review*
