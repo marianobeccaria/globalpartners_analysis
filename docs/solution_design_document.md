@@ -1,6 +1,6 @@
 # GlobalPartners — Solution Design Document
 
-> **Version:** 1.0 | **Status:** Pending SME Approval | **Architecture:** AWS Medallion (Bronze / Silver / Gold)
+> **Version:** 1.2 | **Status:** RDS/JDBC Pipeline Validated | **Architecture:** AWS Medallion (Bronze / Silver / Gold)
 > 
 > **Prepared by:** Data Engineering Team | **Primary Goal:** Customer Lifetime Value (CLV) — Daily
 
@@ -15,8 +15,8 @@
 5. [Pipeline Architecture](#5-pipeline-architecture)
 6. [Gold Layer Data Model](#6-gold-layer-data-model)
 7. [Technology Stack — Why Each Tool Was Chosen](#7-technology-stack--why-each-tool-was-chosen)
-8. [Open Questions for SME Approval](#8-open-questions-for-sme-approval)
-9. [SME Approval](#9-sme-approval)
+8. [SME Confirmed Assumptions](#8-sme-confirmed-assumptions)
+9. [Validation And Remaining Follow-Up](#9-validation-and-remaining-follow-up)
 
 ---
 
@@ -26,7 +26,7 @@ GlobalPartners requires a unified data platform to analyze customer behavior, sp
 
 The **primary deliverable** is a daily-updated Customer Lifetime Value (CLV) model that tracks how each customer's value evolves over time. **Secondary deliverables** include RFM (Recency, Frequency, Monetary) segmentation, churn indicators, sales trend monitoring, loyalty program analysis, location performance ranking, and discount effectiveness. Results will be displayed an interactive Streamlit dashboard.
 
-The entire pipeline runs on AWS using PySpark for all transformation logic, following a Medallion Architecture (Bronze -> Silver -> Gold) orchestrated by AWS Glue Workflow with chained Triggers.
+The entire pipeline runs on AWS using PySpark for all transformation logic, following a Medallion Architecture (Bronze -> Silver -> Gold) orchestrated by AWS Glue Workflow with chained Triggers. The production-style source path has been validated using SQL Server on RDS, a Glue JDBC connection, and a one-time S3-to-SQL-Server loader.
 
 ---
 
@@ -44,7 +44,7 @@ The entire pipeline runs on AWS using PySpark for all transformation logic, foll
 - Surface sales trends and seasonal patterns by location and category
 - Compare loyalty member vs. non-member spending and engagement
 - Rank location performance by revenue, order volume, and average order value
-- Measure discount and promotion effectiveness on revenue and profitability
+- Measure discount and promotion effectiveness on revenue impact. Profitability is out of scope until cost or margin data is provided.
 
 ### 2.2 Constraints
 
@@ -52,7 +52,7 @@ The entire pipeline runs on AWS using PySpark for all transformation logic, foll
 |---|---|
 | Cloud Platform | AWS only — no Snowflake, DBT, or external tool licenses |
 | Transformation Engine | All logic implemented in PySpark |
-| Data Source | SQL Server via JDBC (CSVs used for current development phase) |
+| Data Source | SQL Server/RDS via Glue JDBC for production-style ingestion; S3 CSVs remain available for development and source initialization |
 | Orchestration | AWS Glue Workflow with Triggers — no Step Functions |
 | Scheduling | Daily pipeline run at 2:00 AM UTC |
 | Encryption | SSE-S3 at rest, TLS in transit |
@@ -116,12 +116,12 @@ A full Exploratory Data Analysis was conducted prior to architecture design. All
 | 2 | Zero duplicates in `order_items` and `date_dim` | ✅ Clean | No action required |
 | 3 | 2,299 exact duplicate rows in `order_item_options` | ⚠️ Issue | `dropDuplicates()` in Bronze → Silver job |
 | 4 | 51 rows with same `option_name` but different `option_group_name` | ✅ Valid | Keep — legitimate entries under different menu groups |
-| 5 | Join rate `order_items` ↔ `order_item_options`: 99.99% (15 orphans) | ✅ Clean | Inner join drops 15 orphan records automatically |
-| 6 | `date_dim` only covers 2023; orders span 2020–2024 | ❌ Critical | Regenerate `date_dim` programmatically for 2020–2024 in pipeline |
+| 5 | Many `order_items` rows do not have matching `order_item_options` rows; 15 option rows are orphaned | ✅ Confirmed | Treat options as optional. Preserve all valid order item rows using a left join from items to aggregated options; ignore orphan option rows. |
+| 6 | `date_dim` only covers 2023; orders span 2020–2024 | ✅ Approved | Regenerate `date_dim` programmatically for 2020–2024 in pipeline. Dates outside 2023 are treated as non-holidays for now. |
 | 7 | `date_dim.date_key` format is `DD-MM-YYYY` vs order_date `YYYY-MM-DD` | ❌ Critical | Reformat `date_key` to `YYYY-MM-DD` before joining |
 | 8 | 826 rows from `Alltown Fresh - DEVELOPMENT` platform | ⚠️ Issue | Filter out test orders in Silver layer |
-| 9 | No negative `option_price` values found (0 discounts detected) | ⚠️ Issue | Discount metric to be re-scoped — raised with SME in Section 8 |
-| 10 | `item_price` max = $5,000; `item_quantity` max = 500 | ⚠️ Issue | Raised with SME — may need separate treatment in CLV |
+| 9 | No negative `option_price` values found (0 discounts detected) | ✅ Approved Assumption | Use proxy promotional signals from available data: zero-price items and below-category-average prices. |
+| 10 | `item_price` max = $5,000; `item_quantity` max = 500 | ✅ Approved Assumption | Keep bulk/catering-looking orders in CLV, but flag them separately for transparency and dashboard filtering. |
 | 11 | Single currency (USD) | ✅ Clean | No FX conversion required |
 | 12 | Loyalty split: 23% members, 77% non-members | ✅ Info | Baseline for loyalty program analysis |
 | 13 | 3 ordering platforms; 28 restaurant locations | ✅ Info | All locations rankable; DEVELOPMENT platform filtered |
@@ -133,11 +133,11 @@ A full Exploratory Data Analysis was conducted prior to architecture design. All
 ### 5.1 Overview — AWS Medallion Architecture
 
 ```
-SQL Server (Production) / CSVs (Development)
+SQL Server/RDS via Glue JDBC (Production) / CSVs in S3 (Current Build)
         │
         ▼
 -------------------------------
-│  AWS Glue Python Shell      │  ingestion_job
+│  AWS Glue Spark Job         │  ingestion_job
 │  Trigger 1: Scheduled Daily │  
 -------------------------------
              │ Raw Parquet
@@ -215,9 +215,9 @@ All layers use **Parquet** format with **SSE-S3 encryption at rest**.
 
 ### 5.3 Glue Jobs Detail
 
-#### Job 1 — `ingestion_job` (Python Shell)
+#### Job 1 — `ingestion_job` (Glue Spark)
 
-- Connects to SQL Server via JDBC *(CSV upload to Bronze S3 for development phase)*
+- Supports two source modes: CSV files in S3 for the current build, or SQL Server/RDS through a Glue JDBC connection for production-style ingestion
 - Reads `order_items`, `order_item_options`, and `date_dim`
 - Writes raw Parquet files to Bronze, partitioned by `ingestion_date`
 - **No transformations** — Bronze is an exact copy of the source
@@ -229,17 +229,43 @@ All layers use **Parquet** format with **SSE-S3 encryption at rest**.
 - Filters out 826 `Alltown Fresh - DEVELOPMENT` test orders
 - Parses `creation_time_utc` as ISO8601 timestamps (`format='ISO8601'`)
 - Reformats `date_dim.date_key` from `DD-MM-YYYY` to `YYYY-MM-DD`
-- Regenerates `date_dim` to cover full 2020–2024 range programmatically
-- Inner joins `order_items` ↔ `order_item_options` on `(order_id, lineitem_id)` — drops 15 orphan records
+- Regenerates `date_dim` to cover full 2020–2024 range programmatically; dates outside the provided 2023 holiday calendar are treated as non-holidays
+- Aggregates option revenue to the line-item grain and left joins options to `order_items`, preserving item rows without modifiers/options
+- Ignores orphan option rows that do not match an order item
 - Joins enriched table with `date_dim` on `order_date = date_key`
 - Computes `gross_revenue = (item_price × item_quantity) + (option_price × option_quantity)`
+- Adds bulk/catering indicator fields so high-value or high-quantity orders remain in CLV but can be reported separately
 - Writes `orders_enriched` Parquet to Silver, partitioned by `year/month`
 
 #### Job 3 — `silver_to_gold_job` (PySpark)
 
 - Reads Silver `orders_enriched` table
-- Computes all 7 business metric tables (see Section 6)
+- Computes six core business metric tables (see Section 6)
+- Carries bulk/catering flags into the CLV table using `bulk_orders_to_date` and `has_bulk_order_candidate`
 - Writes each metric as a separate Parquet table to Gold layer
+
+#### Job 4 — `discount_effectiveness_job` (PySpark)
+
+- Reads Silver `orders_enriched` table
+- Builds the `discount_effectiveness` Gold table separately
+- Uses SME-approved proxy promotional signals because no explicit discount code, coupon, promotion table, cost, or margin data is available
+- Flags orders with zero-price items and items priced more than one standard deviation below their category average
+- Reports estimated revenue impact only; profitability is not calculated
+
+#### Utility Job — `load_sqlserver_from_s3_job` (Glue Spark)
+
+- One-time initialization job used before running the main workflow in `SOURCE_MODE=jdbc`
+- Reads the three source CSV files from S3
+- Creates the configured SQL Server database if it does not already exist
+- Writes `dbo.order_items`, `dbo.order_item_options`, and `dbo.date_dim`
+- Keeps the production-style path reproducible from the provided project files
+
+#### Utility Job — `query_sqlserver_job` (Glue Spark)
+
+- Read-only SQL Server/RDS inspection job
+- Uses the Glue JDBC connection and Secrets Manager credential
+- Defaults to listing SQL Server base tables
+- Prints query results to CloudWatch Logs so no local SQL client, SSH tunnel, or direct RDS access is required
 
 ### 5.4 Orchestration — Glue Workflow
 
@@ -280,6 +306,8 @@ This the main deliverable. Tracks how each customer's cumulative lifetime value 
 | `avg_order_value` | Decimal | `total_revenue_to_date / orders_to_date` |
 | `clv_tier` | String | `High` (top 20%) / `Medium` (mid 60%) / `Low` (bottom 20%) |
 | `is_loyalty` | Boolean | Loyalty membership flag as of `snapshot_date` |
+| `bulk_orders_to_date` | Integer | Number of bulk/catering candidate orders included in CLV through `snapshot_date` |
+| `has_bulk_order_candidate` | Boolean | True when the customer has at least one flagged bulk/catering candidate order |
 
 ### 6.2 Secondary Metric Tables
 
@@ -290,7 +318,7 @@ This the main deliverable. Tracks how each customer's cumulative lifetime value 
 | `sales_trends` | `date`, `week`, `month`, `restaurant_id`, `item_category`, `total_revenue`, `order_count` |
 | `loyalty_comparison` | `is_loyalty`, `avg_clv`, `avg_order_value`, `repeat_order_rate`, `total_customers` |
 | `location_performance` | `restaurant_id`, `total_revenue`, `avg_order_value`, `orders_per_day`, `revenue_rank` |
-| `discount_effectiveness` | Pending SME clarification on discount data availability (see Section 8) |
+| `discount_effectiveness` | `order_id`, `is_promotional_order`, `order_type`, `free_item_count`, `below_avg_price_item_count`, `total_estimated_discount`; uses proxy promotional signals and reports estimated revenue impact only |
 
 ---
 
@@ -298,9 +326,9 @@ This the main deliverable. Tracks how each customer's cumulative lifetime value 
 
 | Tool | Justification |
 |---|---|
-| **AWS Glue Python Shell** | Lightweight ingestion. No Spark cluster needed for simple JDBC reads. Cost-efficient for small jobs. |
-| **AWS Glue Spark** | PySpark required by client. Native AWS service. No new licenses. Scales automatically for 200K+ row transformations. |
+| **AWS Glue Spark** | PySpark required by client. Native AWS service. Used for ingestion and transformations so the pipeline can support both CSV and SQL Server/RDS JDBC sources. |
 | **AWS Glue Workflow** | Native orchestration within Glue. Avoids Step Functions. Trigger chaining provides built-in failure isolation. |
+| **Amazon RDS for SQL Server + Glue JDBC Connection** | Provides the target production source pattern requested by the SME. The path was validated end to end after loading the provided CSV source files into SQL Server/RDS. |
 | **Amazon S3 + Parquet** | Cost-effective, durable object storage. Parquet is columnar - fast for PySpark aggregations. Partition pruning reduces scan costs. |
 | **Medallion Architecture** | Bronze preserves raw source fidelity. Silver enforces data quality. Gold serves business metrics cleanly. |
 | **CloudWatch** | Native AWS monitoring. Alarms on job failure ensure pipeline issues are caught immediately. |
@@ -309,41 +337,51 @@ This the main deliverable. Tracks how each customer's cumulative lifetime value 
 
 ---
 
-## 8. Open Questions for SME Approval
+## 8. Confirmed Assumptions
 
-The following items may require SME clarification:
+The following assumptions were reviewed and are reflected in the current pipeline implementation:
 
-| # | Question | Context |
+| # | Confirmed Assumption | Implementation |
 |---|---|---|
-| 1 | **`date_dim` is incomplete — generate programmatically?** | Provided `date_dim` covers 2023 only. Orders span 2020–2024. We recommend generating a full `date_dim` in the pipeline. Please confirm. |
-| 2 | **How are discounts tracked in the system?** | No negative `option_price` values were found in the dataset. The discount effectiveness metric cannot be built as originally designed. Is there another field or table encoding promotions? |
-| 3 | **Should bulk orders be excluded from CLV?** | `item_price` reaches $5,000 and `item_quantity` reaches 500. These appear to be catering/bulk orders. Should they be excluded or treated separately in CLV calculations? |
-| 4 | **Confirm `DEVELOPMENT` platform rows are test data** | `Alltown Fresh - DEVELOPMENT` has 826 rows. We have assumed these are test orders and excluded them from Silver. Please confirm this is correct. |
+| 1 | Generate a full 2020–2024 `date_dim` because the provided calendar only covers 2023. | Silver regenerates the date dimension for 2020–2024. Holiday flags and names are preserved from the provided 2023 data. Dates outside 2023 are treated as non-holidays until a complete holiday calendar is provided. |
+| 2 | Use available-data proxy signals for discount and promotion analysis. | `discount_effectiveness_job` flags zero-price items and below-category-average priced items as proxy promotional signals. |
+| 3 | Profitability cannot be calculated from the current source files. | Discount effectiveness focuses on estimated revenue impact only because product cost, margin, coupon, and promotion-code data are not available. |
+| 4 | Keep bulk/catering-looking orders in CLV, but flag them separately. | Silver adds bulk/catering candidate flags. Gold CLV carries `bulk_orders_to_date` and `has_bulk_order_candidate` so analysts can identify customers whose CLV includes these orders. |
+| 5 | Treat item options/modifiers as optional. | Silver preserves order item rows even when no matching option rows exist. Missing option revenue is treated as zero. |
+| 6 | Document assumptions and limitations clearly in the dashboard and project documentation. | Discount proxy logic, missing profitability data, incomplete holiday coverage, and bulk/catering flags are documented here and surfaced in the dashboard methodology notes. |
 
 ---
 
-## 9. SME Approval
+## 9. Validation And Remaining Follow-Up
 
-By signing below, the Subject Matter Expert confirms that the architecture, data model, and pipeline design described in this document are approved for implementation.
+The default development build can still use CSV files uploaded to S3 as the source dataset. The production-style path has also been deployed and validated:
 
-> **Pipeline build (Step 4) will commence upon written SME approval of this document.**
+```
+S3 CSVs -> one-time SQL Server loader -> SQL Server/RDS -> Glue JDBC ingestion -> S3 Bronze -> Silver -> Gold -> Streamlit Dashboard
+```
+
+Validation completed:
+
+- CDK deployed SQL Server/RDS, security groups, VPC endpoints, Secrets Manager credential, and Glue JDBC connection.
+- `load_sqlserver_from_s3_job.py` loaded `dbo.order_items`, `dbo.order_item_options`, and `dbo.date_dim` into SQL Server/RDS.
+- `query_sqlserver_job.py` validated SQL Server table access through Glue JDBC.
+- `globalpartners_daily_pipeline` completed successfully in `SOURCE_MODE=jdbc`.
+- Dashboard smoke testing was completed after the JDBC-backed Gold refresh.
+
+Remaining follow-up items:
+
+- Update the Draw.io architecture diagram to show the SQL Server/RDS to Glue JDBC target flow and the current CSV-to-S3 development source path.
+- Replace proxy promotional logic with actual discount, coupon, promotion, cost, or margin data if those sources become available.
+- Expand holiday enrichment beyond 2023 if a complete 2020–2024 holiday calendar is provided.
+- Optionally build a one-time Bronze normalization job if historical multi-partition Bronze reads are needed across older Parquet files written by different ingestion implementations.
 
 ---
 
-**SME Name:** _______________________________________________
-
-**Signature:** _______________________________________________
-
-**Date:** _______________________________________________
-
-**Comments:**
 
 ```
  
- 
- 
 ```
 
 ---
 
-*GlobalPartners Solution Design Document v1.0 — Confidential — For SME Review*
+*GlobalPartners Solution Design Document v1.2 — Confidential — For SME Review*

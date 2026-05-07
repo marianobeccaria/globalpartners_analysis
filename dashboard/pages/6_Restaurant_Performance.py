@@ -28,10 +28,6 @@ st.divider()
 df          = load_locations()
 df_trends   = load_sales_trends()
 
-print("=" * 110)
-print(f"\nRestaurant: \n{df}\n")
-print(f"'df_trends': \n{df_trends.head()}\n")
-
 if df.empty:
     st.error("No location data available. Please run the pipeline first.")
     st.stop()
@@ -281,8 +277,6 @@ location_options = df.sort_values("revenue_rank")[[
     "revenue_rank",
 ]].copy()
 
-print(f"location_options:\n{location_options}\n")
-
 location_options["rank_label"] = (
     location_options["revenue_rank"]
     .astype(int)
@@ -316,9 +310,6 @@ if total_locations > MAX_SELECTABLE_LOCATIONS:
 all_location_labels = location_options.set_index("restaurant_id")[
     "selector_label"
 ].to_dict()
-
-print(f"After location_options:\n{location_options}")
-
 
 # Initialize session state on first load only
 default_selection = selectable_options[:MAX_DEFAULT_LOCATIONS]

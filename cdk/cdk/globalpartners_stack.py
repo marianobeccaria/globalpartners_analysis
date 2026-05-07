@@ -4,12 +4,16 @@ from dotenv import load_dotenv
 from aws_cdk import (
     Stack,
     CfnOutput,
+    Duration,
+    RemovalPolicy,
     aws_iam as iam,
     aws_s3 as s3,
     aws_s3_deployment as s3deploy,
     aws_logs as logs,
     aws_glue as glue,
     aws_ec2 as ec2,
+    aws_rds as rds,
+    aws_secretsmanager as secretsmanager,
 )
 from constructs import Construct
 
@@ -29,6 +33,31 @@ class GlobalPartnersStack(Stack):
         dashboard_allowed_cidr  = os.getenv("DASHBOARD_ALLOWED_CIDR", "0.0.0.0/0")
         dashboard_port          = int(os.getenv("DASHBOARD_PORT", "8501"))
 
+        enable_rds_source = os.getenv("ENABLE_RDS_SOURCE", "false").lower() == "true"
+        source_mode = os.getenv("SOURCE_MODE", "csv").lower()
+        sqlserver_db_name = os.getenv("SQLSERVER_DB", "globalpartners")
+        sqlserver_port = int(os.getenv("SQLSERVER_PORT", "1433"))
+        sqlserver_instance_id = os.getenv(
+            "SQLSERVER_INSTANCE_ID",
+            "globalpartners-sqlserver",
+        )
+        sqlserver_instance_type = os.getenv(
+            "SQLSERVER_INSTANCE_TYPE",
+            "t3.small",
+        )
+        sqlserver_allocated_storage = int(os.getenv("SQLSERVER_ALLOCATED_STORAGE", "20"))
+        sqlserver_username = os.getenv("SQLSERVER_USER", "globalpartners_admin")
+        sqlserver_jdbc_url = os.getenv("SQLSERVER_JDBC_URL", "")
+        sqlserver_secret_arn = os.getenv("SQLSERVER_SECRET_ARN", "")
+        glue_jdbc_connection_name = os.getenv(
+            "GLUE_JDBC_CONNECTION_NAME",
+            "globalpartners-sqlserver-jdbc",
+        )
+        jdbc_tables = os.getenv(
+            "JDBC_TABLES",
+            "order_items,order_item_options,date_dim",
+        )
+
         github_repo = os.getenv("GITHUB_REPO", "marianobeccaria/globalpartners_analysis")
         github_branch = os.getenv("GITHUB_BRANCH", "main")
         github_actions_role_name = os.getenv(
@@ -37,6 +66,12 @@ class GlobalPartnersStack(Stack):
         )
         github_oidc_provider_arn = os.getenv("GITHUB_OIDC_PROVIDER_ARN")
         cdk_qualifier = os.getenv("CDK_QUALIFIER", "hnb659fds")
+
+        vpc = ec2.Vpc.from_lookup(
+            self,
+            "DefaultVpc",
+            is_default=True,
+        )
 
 
 
@@ -86,6 +121,150 @@ class GlobalPartnersStack(Stack):
                 resources=["arn:aws:logs:*:*:/aws-glue/*"],
             )
         )
+
+        # ── Optional Resource: SQL Server RDS + Glue JDBC Connection ─────────
+        # The current project build uses CSV files from S3. When ENABLE_RDS_SOURCE
+        # is true, CDK provisions a SQL Server Express instance and a Glue JDBC
+        # connection so ingestion_job.py can run in SOURCE_MODE=jdbc.
+        jdbc_url = sqlserver_jdbc_url
+        jdbc_secret_arn = sqlserver_secret_arn
+        ingestion_job_connections = None
+
+        if enable_rds_source:
+            glue_jdbc_sg = ec2.SecurityGroup(
+                self,
+                "GlobalPartnersGlueJdbcSecurityGroup",
+                vpc=vpc,
+                description="Security group used by Glue JDBC jobs",
+                allow_all_outbound=True,
+            )
+
+            # AWS Glue JDBC connections require the attached security group to
+            # allow all inbound traffic from itself so Glue worker ENIs can
+            # communicate during job startup and execution. SQL Server access is
+            # still limited separately by the database security group below.
+            glue_jdbc_sg.add_ingress_rule(
+                peer=glue_jdbc_sg,
+                connection=ec2.Port.all_traffic(),
+                description="Glue worker self-reference required for JDBC jobs",
+            )
+
+            # Glue jobs attached to a VPC do not receive public IP addresses.
+            # They need a private path to S3 for reading scripts/data and a
+            # private path to Secrets Manager because the loader/ingestion jobs
+            # fetch SQL Server credentials at runtime.
+            vpc.add_gateway_endpoint(
+                "GlobalPartnersS3GatewayEndpoint",
+                service=ec2.GatewayVpcEndpointAwsService.S3,
+                subnets=[
+                    ec2.SubnetSelection(subnet_type=ec2.SubnetType.PUBLIC),
+                ],
+            )
+
+            secrets_endpoint_sg = ec2.SecurityGroup(
+                self,
+                "GlobalPartnersSecretsManagerEndpointSecurityGroup",
+                vpc=vpc,
+                description="Allow Glue JDBC jobs to reach Secrets Manager privately",
+                allow_all_outbound=True,
+            )
+
+            secrets_endpoint_sg.add_ingress_rule(
+                peer=glue_jdbc_sg,
+                connection=ec2.Port.tcp(443),
+                description="HTTPS from Glue JDBC workers to Secrets Manager endpoint",
+            )
+
+            vpc.add_interface_endpoint(
+                "GlobalPartnersSecretsManagerEndpoint",
+                service=ec2.InterfaceVpcEndpointAwsService.SECRETS_MANAGER,
+                subnets=ec2.SubnetSelection(subnet_type=ec2.SubnetType.PUBLIC),
+                security_groups=[secrets_endpoint_sg],
+                private_dns_enabled=True,
+            )
+
+            sqlserver_sg = ec2.SecurityGroup(
+                self,
+                "GlobalPartnersSqlServerSecurityGroup",
+                vpc=vpc,
+                description="Allow SQL Server access from Glue JDBC jobs",
+                allow_all_outbound=True,
+            )
+
+            sqlserver_sg.add_ingress_rule(
+                peer=glue_jdbc_sg,
+                connection=ec2.Port.tcp(sqlserver_port),
+                description="SQL Server access from Glue JDBC connection",
+            )
+
+            sqlserver_secret = secretsmanager.Secret(
+                self,
+                "GlobalPartnersSqlServerSecret",
+                secret_name=f"{sqlserver_instance_id}-credentials",
+                generate_secret_string=secretsmanager.SecretStringGenerator(
+                    secret_string_template=f'{{"username":"{sqlserver_username}"}}',
+                    generate_string_key="password",
+                    exclude_punctuation=True,
+                    password_length=24,
+                ),
+            )
+
+            sqlserver_instance = rds.DatabaseInstance(
+                self,
+                "GlobalPartnersSqlServerInstance",
+                instance_identifier=sqlserver_instance_id,
+                engine=rds.DatabaseInstanceEngine.sql_server_ex(
+                    version=rds.SqlServerEngineVersion.VER_15,
+                ),
+                credentials=rds.Credentials.from_secret(sqlserver_secret),
+                vpc=vpc,
+                vpc_subnets=ec2.SubnetSelection(
+                    subnet_type=ec2.SubnetType.PUBLIC,
+                ),
+                security_groups=[sqlserver_sg],
+                instance_type=ec2.InstanceType(sqlserver_instance_type),
+                allocated_storage=sqlserver_allocated_storage,
+                max_allocated_storage=max(sqlserver_allocated_storage, 100),
+                port=sqlserver_port,
+                publicly_accessible=False,
+                backup_retention=Duration.days(1),
+                deletion_protection=False,
+                removal_policy=RemovalPolicy.SNAPSHOT,
+            )
+
+            jdbc_url = (
+                f"jdbc:sqlserver://{sqlserver_instance.db_instance_endpoint_address}:"
+                f"{sqlserver_port};databaseName={sqlserver_db_name};"
+                "encrypt=true;trustServerCertificate=true"
+            )
+            jdbc_secret_arn = sqlserver_secret.secret_arn
+
+            glue_connection_subnet = vpc.public_subnets[0]
+            glue_jdbc_connection = glue.CfnConnection(
+                self,
+                "GlobalPartnersGlueJdbcConnection",
+                catalog_id=self.account,
+                connection_input=glue.CfnConnection.ConnectionInputProperty(
+                    name=glue_jdbc_connection_name,
+                    connection_type="JDBC",
+                    description="JDBC connection from AWS Glue to GlobalPartners SQL Server RDS",
+                    connection_properties={
+                        "JDBC_CONNECTION_URL": jdbc_url,
+                        "SECRET_ID": sqlserver_secret.secret_arn,
+                    },
+                    physical_connection_requirements=glue.CfnConnection.PhysicalConnectionRequirementsProperty(
+                        availability_zone=glue_connection_subnet.availability_zone,
+                        security_group_id_list=[glue_jdbc_sg.security_group_id],
+                        subnet_id=glue_connection_subnet.subnet_id,
+                    ),
+                ),
+            )
+            glue_jdbc_connection.node.add_dependency(sqlserver_instance)
+
+            sqlserver_secret.grant_read(glue_role)
+            ingestion_job_connections = glue.CfnJob.ConnectionsListProperty(
+                connections=[glue_jdbc_connection_name],
+            )
 
         # ── Resource 2: S3 Folder Structure ────────────────────────
         # Upload empty .keep files to establish Bronze / Silver / Gold prefixes in the bucket
@@ -233,36 +412,45 @@ class GlobalPartnersStack(Stack):
         churn_days        = os.getenv("CHURN_DAYS", "45")
         rfm_months        = os.getenv("RFM_MONTHS", "6")
 
-        # ── Job 1: ingestion_job (Python Shell) ─────────────────────
-        # Python Shell — no Spark cluster needed for simple CSV reads.
-        # Lighter and cheaper than a Spark job for ingestion.
+        # ── Job 1: ingestion_job (Spark) ────────────────────────────
+        # Spark supports both current CSV ingestion and the target
+        # production SQL Server/RDS JDBC ingestion path.
         ingestion_job = glue.CfnJob(
             self,
             "IngestionJob",
             name=ingestion_job_name,
             role=glue_role_arn,
             command=glue.CfnJob.JobCommandProperty(
-                name="pythonshell",
-                python_version="3.9",
+                name="glueetl",
+                python_version="3",
                 script_location=f"{script_base}/ingestion_job.py",
             ),
+            connections=ingestion_job_connections,
             default_arguments={
-                "--job-language":                    "python",
-                "--TempDir":                         f"s3://{bucket_name}/tmp/",
+                "--job-language":                     "python",
+                "--TempDir":                          f"s3://{bucket_name}/tmp/",
                 "--enable-continuous-cloudwatch-log": "true",
-                "--enable-metrics":                  "true",
-                "--additional-python-modules":       "pyarrow==11.0.0,pandas==2.0.0",
-                "--S3_BUCKET":                       bucket_name,
-                "--SOURCE_PREFIX":                   "source",
-                "--BRONZE_PREFIX":                   "bronze",
+                "--enable-metrics":                   "true",
+                "--enable-spark-ui":                  "true",
+                "--spark-event-logs-path":            f"s3://{bucket_name}/spark-logs/",
+                "--S3_BUCKET":                        bucket_name,
+                "--SOURCE_PREFIX":                    "source",
+                "--BRONZE_PREFIX":                    "bronze",
+                "--SOURCE_MODE":                      source_mode,
+                "--JDBC_URL":                         jdbc_url or "unused",
+                "--JDBC_TABLES":                      jdbc_tables,
+                "--JDBC_SECRET_ARN":                  jdbc_secret_arn or "unused",
             },
-            max_capacity=0.0625,   # 1/16 DPU — minimum for Python Shell
+            worker_type="G.1X",
+            number_of_workers=2,
             max_retries=1,
             timeout=30,            # minutes
-            glue_version="3.0",
-            description="GlobalPartners — ingest source CSVs to Bronze S3 layer",
+            glue_version="4.0",
+            description="GlobalPartners — ingest source data to Bronze S3 layer",
         )
         ingestion_job.node.add_dependency(glue_scripts_deployment)
+        if enable_rds_source:
+            ingestion_job.node.add_dependency(glue_jdbc_connection)
 
         # ── Job 2: bronze_to_silver_job (Spark) ─────────────────────
         # Spark job — handles joins, deduplication, and enrichment.
@@ -493,12 +681,6 @@ class GlobalPartnersStack(Stack):
         )
 
         # Resource 7: EC2 Streamlit Dashboard
-        vpc = ec2.Vpc.from_lookup(
-            self,
-            "DefaultVpc",
-            is_default=True,
-        )
-
         dashboard_sg = ec2.SecurityGroup(
             self,
             "GlobalPartnersDashboardSecurityGroup",
@@ -718,3 +900,21 @@ class GlobalPartnersStack(Stack):
             value=github_actions_role.role_arn,
         )
 
+        if enable_rds_source:
+            CfnOutput(
+                self,
+                "GlobalPartnersSqlServerEndpoint",
+                value=sqlserver_instance.db_instance_endpoint_address,
+            )
+
+            CfnOutput(
+                self,
+                "GlobalPartnersGlueJdbcConnectionName",
+                value=glue_jdbc_connection_name,
+            )
+
+            CfnOutput(
+                self,
+                "GlobalPartnersSqlServerSecretArn",
+                value=jdbc_secret_arn,
+            )

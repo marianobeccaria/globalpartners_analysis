@@ -48,16 +48,6 @@ st.caption(
 
 st.divider()
 
-# Getting some sample data in the logs to examine
-print("=" * 110)
-print(f"Sample `df_clv`: \n{df_clv.head(5)}\n")
-print(f"Sample `df_rfm`: \n{df_rfm.head(5)}\n")
-print(f"Sample `df_churn`: \n{df_churn.head(5)}\n")
-print(f"Sample `df_trends`: \n{df_trends.head(5)}\n")
-print(f"Sample `df_loyalty`: \n{df_loyalty.head(5)}\n")
-print(f"Sample `df_location`: \n{df_location.head(5)}\n")
-print("=" * 110)
-
 # ── KPI Cards Row 1 ────────────────────────────────────────────────────────────
 st.subheader("📊 Key Business Metrics")
 
@@ -115,7 +105,7 @@ with col_left:
         # Get each customer's final (most recent) CLV tier
         latest_clv = df_clv.sort_values("snapshot_date").groupby("user_id").last().reset_index()
         tier_counts = latest_clv["clv_tier"].value_counts()
-        #print(f"tier_counts:\n{tier_counts}")
+
         fig = go.Figure(go.Pie(
             labels=tier_counts.index,
             values=tier_counts.values,

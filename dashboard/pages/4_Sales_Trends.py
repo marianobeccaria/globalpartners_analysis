@@ -31,7 +31,6 @@ st.divider()
 
 # ── Load data ──────────────────────────────────────────────────────────────────
 df = load_sales_trends()
-print(df.head(10))
 
 if df.empty:
     st.error("No sales trend data available. Please run the pipeline first.")
