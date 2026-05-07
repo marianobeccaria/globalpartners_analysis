@@ -139,6 +139,50 @@ class GlobalPartnersStack(Stack):
                 allow_all_outbound=True,
             )
 
+            # AWS Glue JDBC connections require the attached security group to
+            # allow all inbound traffic from itself so Glue worker ENIs can
+            # communicate during job startup and execution. SQL Server access is
+            # still limited separately by the database security group below.
+            glue_jdbc_sg.add_ingress_rule(
+                peer=glue_jdbc_sg,
+                connection=ec2.Port.all_traffic(),
+                description="Glue worker self-reference required for JDBC jobs",
+            )
+
+            # Glue jobs attached to a VPC do not receive public IP addresses.
+            # They need a private path to S3 for reading scripts/data and a
+            # private path to Secrets Manager because the loader/ingestion jobs
+            # fetch SQL Server credentials at runtime.
+            vpc.add_gateway_endpoint(
+                "GlobalPartnersS3GatewayEndpoint",
+                service=ec2.GatewayVpcEndpointAwsService.S3,
+                subnets=[
+                    ec2.SubnetSelection(subnet_type=ec2.SubnetType.PUBLIC),
+                ],
+            )
+
+            secrets_endpoint_sg = ec2.SecurityGroup(
+                self,
+                "GlobalPartnersSecretsManagerEndpointSecurityGroup",
+                vpc=vpc,
+                description="Allow Glue JDBC jobs to reach Secrets Manager privately",
+                allow_all_outbound=True,
+            )
+
+            secrets_endpoint_sg.add_ingress_rule(
+                peer=glue_jdbc_sg,
+                connection=ec2.Port.tcp(443),
+                description="HTTPS from Glue JDBC workers to Secrets Manager endpoint",
+            )
+
+            vpc.add_interface_endpoint(
+                "GlobalPartnersSecretsManagerEndpoint",
+                service=ec2.InterfaceVpcEndpointAwsService.SECRETS_MANAGER,
+                subnets=ec2.SubnetSelection(subnet_type=ec2.SubnetType.PUBLIC),
+                security_groups=[secrets_endpoint_sg],
+                private_dns_enabled=True,
+            )
+
             sqlserver_sg = ec2.SecurityGroup(
                 self,
                 "GlobalPartnersSqlServerSecurityGroup",
