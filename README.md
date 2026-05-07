@@ -28,6 +28,8 @@ Remaining:
 
 ## Architecture Summary
 
+For more detail information about the Architecture used in this project check [Solution Design](docs/solution_design_document.md)
+
 ```text
 SQL Server / RDS
         |
