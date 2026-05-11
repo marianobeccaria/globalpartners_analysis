@@ -306,6 +306,30 @@ When running in production-style JDBC mode, initialize SQL Server/RDS before sta
 S3 source CSVs -> load_sqlserver_from_s3_job.py -> SQL Server/RDS source tables
 ```
 
+CDK provisions the SQL Server/RDS instance, Glue JDBC connection, Secrets Manager credentials, and one-time loader job when these settings are enabled:
+
+```env
+ENABLE_RDS_SOURCE=true
+SOURCE_MODE=jdbc
+```
+
+After `cdk deploy`, run the loader once:
+
+```bash
+aws glue start-job-run \
+  --job-name globalpartners_load_sqlserver_from_s3_job
+```
+
+Verify the loader completed:
+
+```bash
+aws glue get-job-runs \
+  --job-name globalpartners_load_sqlserver_from_s3_job \
+  --max-results 1 \
+  --query 'JobRuns[0].{Status:JobRunState,Error:ErrorMessage,Duration:ExecutionTime,Started:StartedOn}' \
+  --output table
+```
+
 The one-time loader writes:
 
 ```text
@@ -314,13 +338,24 @@ dbo.order_item_options
 dbo.date_dim
 ```
 
+Then run ingestion normally, without CLI argument overrides:
+
+```bash
+aws glue start-job-run \
+  --job-name globalpartners_ingestion_job
+```
+
+A successful ingestion run confirms the active path:
+
+```text
+SQL Server/RDS -> Glue JDBC connection -> S3 Bronze
+```
+
 The RDS/JDBC flow was validated with:
 
 ```text
 S3 CSVs -> one-time SQL Server loader -> SQL Server/RDS -> Glue JDBC ingestion -> Bronze -> Silver -> Gold -> Streamlit
 ```
-
-`query_sqlserver_job.py` can be used to run read-only SQL Server inspection queries through Glue JDBC. Its default query lists base tables and prints results to CloudWatch Logs.
 
 ## Run the Glue Pipeline
 

@@ -262,6 +262,20 @@ class GlobalPartnersStack(Stack):
             glue_jdbc_connection.node.add_dependency(sqlserver_instance)
 
             sqlserver_secret.grant_read(glue_role)
+            glue_role.add_to_policy(
+                iam.PolicyStatement(
+                    sid="GlobalPartnersSqlServerSecretRead",
+                    actions=[
+                        "secretsmanager:GetSecretValue",
+                        "secretsmanager:DescribeSecret",
+                    ],
+                    resources=[
+                        sqlserver_secret.secret_arn,
+                        f"{sqlserver_secret.secret_arn}*",
+                    ],
+                )
+            )
+
             ingestion_job_connections = glue.CfnJob.ConnectionsListProperty(
                 connections=[glue_jdbc_connection_name],
             )
@@ -449,8 +463,45 @@ class GlobalPartnersStack(Stack):
             description="GlobalPartners — ingest source data to Bronze S3 layer",
         )
         ingestion_job.node.add_dependency(glue_scripts_deployment)
+
         if enable_rds_source:
             ingestion_job.node.add_dependency(glue_jdbc_connection)
+            load_sqlserver_job = glue.CfnJob(
+                self,
+                "LoadSqlServerFromS3Job",
+                name="globalpartners_load_sqlserver_from_s3_job",
+                role=glue_role_arn,
+                command=glue.CfnJob.JobCommandProperty(
+                    name="glueetl",
+                    python_version="3",
+                    script_location=f"{script_base}/load_sqlserver_from_s3_job.py",
+                ),
+                connections=ingestion_job_connections,
+                default_arguments={
+                    "--job-language": "python",
+                    "--TempDir": f"s3://{bucket_name}/tmp/",
+                    "--enable-continuous-cloudwatch-log": "true",
+                    "--enable-metrics": "true",
+                    "--enable-spark-ui": "true",
+                    "--spark-event-logs-path": f"s3://{bucket_name}/spark-logs/",
+                    "--S3_BUCKET": bucket_name,
+                    "--SOURCE_PREFIX": "source",
+                    "--JDBC_HOST": sqlserver_instance.db_instance_endpoint_address,
+                    "--JDBC_PORT": str(sqlserver_port),
+                    "--JDBC_DATABASE": sqlserver_db_name,
+                    "--JDBC_SECRET_ARN": jdbc_secret_arn,
+                },
+                worker_type="G.1X",
+                number_of_workers=2,
+                max_retries=0,
+                timeout=30,
+                glue_version="4.0",
+                description="GlobalPartners — one-time loader from S3 CSV source files to SQL Server/RDS",
+            )
+            load_sqlserver_job.node.add_dependency(glue_scripts_deployment)
+            load_sqlserver_job.node.add_dependency(glue_jdbc_connection)
+            load_sqlserver_job.node.add_dependency(sqlserver_instance)
+
 
         # ── Job 2: bronze_to_silver_job (Spark) ─────────────────────
         # Spark job — handles joins, deduplication, and enrichment.
