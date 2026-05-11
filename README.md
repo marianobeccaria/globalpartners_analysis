@@ -422,6 +422,28 @@ The dashboard reads the Gold Parquet tables from S3 using `dashboard/utils/data_
 - `6_Restaurant_Performance.py`: location-level performance
 - `7_Discount_Effectiveness.py`: inferred promotional order effectiveness
 
+## Dashboard Screenshots
+
+<p>
+  <img src="docs/images/dashboard-home.png" alt="Dashboard home page" width="300">
+  <img src="docs/images/dashboard-clv.png" alt="CLV dashboard page" width="300">
+</p>
+
+<p>
+  <img src="docs/images/dashboard-rfm-segments.png" alt="RFM segments dashboard page" width="300">
+  <img src="docs/images/dashboard-churn.png" alt="Churn risk dashboard page" width="300">
+</p>
+
+<p>
+  <img src="docs/images/dashboard-sales.png" alt="Sales trends dashboard page" width="300">
+  <img src="docs/images/dashboard-loyalty.png" alt="Loyalty impact dashboard page" width="300">
+</p>
+
+<p>
+  <img src="docs/images/dashboard-performance.png" alt="Restaurant performance dashboard page" width="300">
+  <img src="docs/images/dashboard-promo.png" alt="Discount effectiveness dashboard page" width="300">
+</p>
+
 ## EC2 Dashboard Deployment
 
 The Streamlit dashboard is deployed to EC2 through CDK.
